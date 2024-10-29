@@ -1,0 +1,16 @@
+[package]
+name = "secure"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aes = "0.8.4"
+block-padding = "0.3.3"
+generic-array = "1.1.0"
+hex = "0.4.3"
+rand = "0.8.5"
+typenum = "1.17.0"
+
+[[bin]]
+name = "secure"
+path = "main.rs"
