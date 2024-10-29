@@ -24,11 +24,18 @@ fn main() -> io::Result<()> {
     /*
     arg1 - function (help, encrypt, decrypt)
     arg2 - file
-    arg3 - key
+    arg3 - key - must be 32 bytes
     */
 
     if args.len() > 1 && args[1] == "help" {
-        println!("To use this software, use secure.exe <function> <file_path> <key>")
+        println!("To use this software, use secure.exe <function> <file_path> <key>");
+        println!("Key size must be 32 bytes");
+        println!("If key is not entered, it will be generated randomly and given to you as a plaintext.");
+        println!("If user is authenticated then key will be tied to authentication, unless specified differently");
+        println!("---");
+        println!("---");
+        println!("---");
+        println!("---");
     }
 
     if args.len() > 1 && args[1] == "encrypt" {
@@ -41,104 +48,15 @@ fn main() -> io::Result<()> {
         }
     }
 
-
-
-
-    // ---- file read -----
-    // file_path.push(&args[2]);
-    
-    //println!("In file {}", file_path.display());
-    /*
-    let contents = fs::read_to_string(file_path)
-    .expect("Should have been able to read the file");
-let mut plaintext = contents.clone().into_bytes();
-
-// Padding
-let padding_length = 16 - (plaintext.len() % 16);
-plaintext.extend(vec![padding_length as u8; padding_length]);
-
-
-
-println!("With text:\n{contents}");
-*/
-
-// ---- file read -----
-
-// ---- file write ----
-//let mut file = File::create("output.txt")?;
-//let mut key_file = File::create("key.txt")?;
-
-// Write a string to the file
-// file.write_all(b"Hello, world!")?;
-
-// Optional: write additional data
-    // file.write_all(b"\nThis is a new line.")?;
-
-    // ------------------------- 
-
-
-    //let key = GenericArray::from([u8; 32]);
-    //let mut block = GenericArray::from([42u8; 16]);
-    //println!("key: {}", hex::encode(key));
-    //println!("block: {}", hex::encode(block));
-    
-/* 
-    // Initialize cipher
-    let cipher = Aes256::new(&key);
-    
-    //let block_copy = block.clone();
-    let mut blocks: Vec<GenericArray<u8, aes::cipher::consts::U16>> = plaintext
-    .chunks_exact(16)
-    .map(|chunk| GenericArray::clone_from_slice(chunk))
-    .collect();
-
-for block in &mut blocks {
-    cipher.encrypt_block(block);
-}
-
-// Convert encrypted blocks back to a byte array
-let ciphertext: Vec<u8> = blocks.iter()
-.flat_map(|block| block.as_slice())
-.cloned().collect();
-
-file.write_all(&ciphertext)?;
-// Encrypt block in-place
-
- */
-    
-    
-    
-    
-    //cipher.encrypt_block(&mut block);
-    //println!("encrypted: {}", hex::encode(block));
-
-    // And decrypt it back
-    //cipher.decrypt_block(&mut block);
-    //assert_eq!(block, block_copy);
-    //println!("decrypted: {}", hex::encode(block));
-    
-    // Implementation supports parallel block processing. Number of blocks
-    // processed in parallel depends in general on hardware capabilities.
-    // This is achieved by instruction-level parallelism (ILP) on a single
-    // CPU core, which is differen from multi-threaded parallelism.
-    //let mut blocks = [block; 32];
-    //println!("blocks (before encryption): {}", blocks.iter().map(hex::encode).collect::<Vec<_>>().join(", "));
-    //cipher.encrypt_blocks(&mut blocks);
-    //println!("blocks (after encryption): {}", blocks.iter().map(hex::encode).collect::<Vec<_>>().join(", "));
-    /*
-    for block in blocks.iter_mut() {
-        cipher.decrypt_block(block);
-        assert_eq!(block, &block_copy);
+    if args.len() > 1 && args[1] == "decrypt" {
+        if args.len() > 2 {
+            let mut file_path = PathBuf::from(&current_dir);
+            file_path.push(&args[2]);
+            
+            let key = GenericArray::from([0u8; 32]);
+            file_decryption(file_path, key)?;
+        }
     }
-    
-    // `decrypt_blocks` also supports parallel block processing.
-    cipher.decrypt_blocks(&mut blocks);
-    
-    for block in blocks.iter_mut() {
-        cipher.encrypt_block(block);
-        assert_eq!(block, &block_copy);
-    }
-    */
 
     Ok(())
 }
@@ -195,47 +113,56 @@ fn file_encryption(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Result
     file.write_all(&ciphertext)?;
     Ok(())
 }
-/*
 
-fn file_decryption() {
+fn file_decryption(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Result<()> {
+    // File name for decrypted output
+    let file_stem = file_path.file_stem().unwrap();
+    let file_stem_str = file_stem.to_str().unwrap();
+    println!("file_stem_str: {}",file_stem_str);
     
+    // Remove the ".encrypted.rt" from the stem if it exists
+    let new_file_stem = file_stem_str.trim_end_matches(".encrypted");
+    println!("new_file_stem: {}",new_file_stem);
+
+    // Create the new file name with ".decrypted.txt" extension
+    let new_file_name = format!("{}", new_file_stem,);
+    println!("new_file_name: {}",new_file_name);
+    
+    // Read the encrypted file
+    let encrypted_data = fs::read(&file_path)?;
+    
+    // Cipher initialization
+    let cipher = Aes256::new(&key);
+    
+    // Decrypting
+    let mut blocks: Vec<GenericArray<u8, aes::cipher::consts::U16>> = encrypted_data
+        .chunks_exact(16)
+        .map(GenericArray::clone_from_slice)
+        .collect();
+
+    // Decrypt each block
+    for block in &mut blocks {
+        cipher.decrypt_block(block);
+    }
+
+    // Convert decrypted blocks back to a byte array
+    let mut decrypted_data: Vec<u8> = blocks.iter()
+        .flat_map(|block| block.as_slice())
+        .cloned()
+        .collect();
+    
+    // Remove padding
+    let padding_length = *decrypted_data.last().unwrap();
+    decrypted_data.truncate(decrypted_data.len() - padding_length as usize);
+
+    // Create output directory
+    let new_directory_name = "decrypted";
+    fs::create_dir_all(new_directory_name)?;
+    let new_file_path = Path::new(new_directory_name).join(new_file_name);
+
+    // Create output file
+    let mut file = File::create(&new_file_path)?;
+    file.write_all(&decrypted_data)?;
+
+    Ok(())
 }
-
-fn file_deletion() {
-
-}
-*/
-
-//-----------------------------------
-
-//Security -------------------------------------
-/*
-
-fn sanitization() {
-
-}
-
-fn max_length() {
-
-}
-
-*/
-
-// Authentication
-
-/*
-
-*/
-
-// Input Validation
-
-/*
-
-*/
-
-
-// Logging and Error Handling
-
-/*
-
-*/
