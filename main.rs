@@ -42,9 +42,12 @@ fn main() -> io::Result<()> {
         println!("If key is not entered, it will be generated randomly and given to you as a plaintext during encryption.");
         println!("Key must be entered during decryption!");
         println!("If user is authenticated then key will be tied to authentication, unless specified differently");
-        println!("---");
-        println!("---");
-        println!("---");
+        println!("functions: help, encrypt, decrypt, delete, encrypt-delete");
+        println!("help - Provides this same text wall.");
+        println!("encrypt - Encrypts the file, requires file path, key is optional");
+        println!("decrypt - Decrypts the file, requres file path, key is mandatory");
+        println!("delete - Deletes file securely");
+        println!("encrypt-delete - Encrypts the file and then deletes the initial file securely, requires file path, key is optional");
     }
 
     if args.len() > 1 && args[1] == "encrypt" {
@@ -57,6 +60,9 @@ fn main() -> io::Result<()> {
             file_encryption(file_path, key)?;
         }
         if args.len() == 4 { // with key, take user input as key, secure.exe encrypt file key
+
+            let mut file_path = PathBuf::from(&current_dir);
+            file_path.push(&args[2]);
             
             // make a random 32 bit long byte array 
             let mut byte_array = [0u8; 32];
@@ -76,6 +82,7 @@ fn main() -> io::Result<()> {
 
             let key: GenericArray<u8, U32> = GenericArray::from(byte_array);
             println!("{:?}", hex::encode(key));
+            file_encryption(file_path, key)?
         }
     }
 
@@ -114,6 +121,48 @@ fn main() -> io::Result<()> {
         }
     }
 
+    if args.len() > 1 && args[1] == "encrypt-delete" {
+        if args.len() == 3 { // without key, generate random key secure.exe encrypt file ...
+            let mut file_path = PathBuf::from(&current_dir);
+            file_path.push(&args[2]);
+
+            let key = generate_random_aes_key();
+            println!("{:?}", hex::encode(key));
+            file_encryption(file_path, key)?;
+            let mut file_path = PathBuf::from(&current_dir);
+            file_path.push(&args[2]);
+            //println!("File path: {:?}",file_path);
+            file_deletion(file_path)?;
+        }
+        if args.len() == 4 { // with key, take user input as key, secure.exe encrypt file key
+            let mut file_path = PathBuf::from(&current_dir);
+            file_path.push(&args[2]);
+            // make a random 32 bit long byte array 
+            let mut byte_array = [0u8; 32];
+            let input_bytes = validate_aes_key(&args[3]);
+
+            // Step 2: Copy the first 32 bytes (or pad with 0s if shorter)
+            match input_bytes {
+                Some(valid_key) => {
+                    // Copy the validated key into `byte_array`
+                    byte_array.copy_from_slice(&valid_key);
+                    println!("AES Key: {:?}", byte_array);
+                }
+                None => {
+                    // if invalid input, promt again.
+                }
+            }
+
+            let key: GenericArray<u8, U32> = GenericArray::from(byte_array);
+            file_encryption(file_path.clone(), key)?;
+            let mut file_path = PathBuf::from(&current_dir);
+            file_path.push(&args[2]);
+            //println!("File path: {:?}",file_path);
+            file_deletion(file_path)?;
+            println!("AES Key: {:?}", hex::encode(key));
+        }
+    }
+
     Ok(())
 }
     
@@ -121,10 +170,10 @@ fn main() -> io::Result<()> {
     // ENCRYPTION/DECRYPTION --------------------------------
     /*
     
-    1. Implement AES for Encryption
-    2. Implement AES for Decryption
-    3. Memory in key for guest user, Memory saved for authenticated user
-    4. Secure Original File Deletion after encryption 
+    1. Implement AES for Encryption +
+    2. Implement AES for Decryption +
+    3. Memory in key for guest user, key saved? for authenticated user
+    4. Secure Original File Deletion + 
     
 - Library 
 */
@@ -133,40 +182,42 @@ fn file_encryption(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Result
     // file name
     let file_name = &file_path.file_stem().unwrap();
     let new_file_name = format!("{}{}", file_name.to_str().unwrap(), ".encrypted.rt");
-    let contents = fs::read_to_string(file_path)
+    let contents = fs::read_to_string(file_path.clone())
     .expect("Should have been able to read the file");
     let mut plaintext = contents.clone().into_bytes();
-
+    
     // Padding
     let padding_length = 16 - (plaintext.len() % 16);
     plaintext.extend(vec![padding_length as u8; padding_length]);
-
-
+    
+    
     // cipher
     let cipher = Aes256::new(&key);
     let mut blocks: Vec<GenericArray<u8, aes::cipher::consts::U16>> = plaintext
     .chunks_exact(16)
     .map(|chunk| GenericArray::clone_from_slice(chunk))
     .collect();
-
+    
     // encrypting
     for block in &mut blocks {
         cipher.encrypt_block(block);
     }
-
+    
     // Convert encrypted blocks back to a byte array
     let ciphertext: Vec<u8> = blocks.iter()
-        .flat_map(|block| block.as_slice())
-        .cloned().collect();
-
+    .flat_map(|block| block.as_slice())
+    .cloned().collect();
+    
     // create new directory
     let new_directory_name = "encrypted";
     fs::create_dir_all(new_directory_name)?;
     let new_file_path = Path::new(new_directory_name).join(new_file_name);
-
+    
     // create output file
     let mut file = File::create(&new_file_path)?;
     file.write_all(&ciphertext)?;
+    drop(file_path);
+    drop(file);
     Ok(())
 }
 
@@ -269,3 +320,30 @@ fn generate_random_aes_key() -> GenericArray<u8, U32> {
     rng.fill(&mut key_bytes); // Fill the array with random bytes
     GenericArray::from(key_bytes) // Convert to GenericArray
 }
+
+fn register(username: &str, password: &str, password_again: &str ) {
+
+}
+
+fn login(username: &str, password &str) {
+
+}
+
+fn change_password(username: &str, password: &str, new_password: &str) {
+
+}
+
+fn create_auth_db() -> io::Result<()> {
+
+    Ok(())
+}
+
+fn read_auth_db() {
+
+}
+
+fn write_auth_db() -> io::Result<()> {
+
+    Ok(())
+}
+
