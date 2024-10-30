@@ -9,52 +9,108 @@ use std::path::PathBuf;
 use std::path::Path;
 use std::fs::File;
 use std::io::{self, Write};
-use block_padding::Pkcs7;
-use aes::cipher::{BlockEncryptMut, KeyIvInit};
+//use block_padding::Pkcs7;
+//use aes::cipher;
 use typenum::U32;
-use hex;
+//use hex;
+use hex::FromHex;
+use std::fs::{OpenOptions, remove_file};
+use std::io::{Seek, SeekFrom};
+use rand::Rng;  // rand crate for generating random data
 
 fn main() -> io::Result<()> {
 
     let args: Vec<String> = env::args().collect();
     dbg!(&args);
     let current_dir = env::current_dir().expect("Failed to get current directory");
-    let file_path = PathBuf::from(&current_dir);
     //println!("Current directory: {:?}", current_dir);
     /*
-    arg1 - function (help, encrypt, decrypt)
+    arg1 - function (help, encrypt, decrypt, delete)
     arg2 - file
     arg3 - key - must be 32 bytes
     */
 
-    if args.len() > 1 && args[1] == "help" {
+    if args.len() == 1 {
+        // while true session with authentication 
+        // - create authentication database
+
+    }
+
+    if args.len() == 2 && args[1] == "help" {
         println!("To use this software, use secure.exe <function> <file_path> <key>");
         println!("Key size must be 32 bytes");
-        println!("If key is not entered, it will be generated randomly and given to you as a plaintext.");
+        println!("If key is not entered, it will be generated randomly and given to you as a plaintext during encryption.");
+        println!("Key must be entered during decryption!");
         println!("If user is authenticated then key will be tied to authentication, unless specified differently");
-        println!("---");
         println!("---");
         println!("---");
         println!("---");
     }
 
     if args.len() > 1 && args[1] == "encrypt" {
-        if args.len() > 2 {
+        if args.len() == 3 { // without key, generate random key secure.exe encrypt file ...
             let mut file_path = PathBuf::from(&current_dir);
             file_path.push(&args[2]);
 
-            let key = GenericArray::from([0u8; 32]);
+            let key = generate_random_aes_key();
+            println!("{:?}", hex::encode(key));
             file_encryption(file_path, key)?;
+        }
+        if args.len() == 4 { // with key, take user input as key, secure.exe encrypt file key
+            
+            // make a random 32 bit long byte array 
+            let mut byte_array = [0u8; 32];
+            let input_bytes = validate_aes_key(&args[3]);
+
+            // Step 2: Copy the first 32 bytes (or pad with 0s if shorter)
+            match input_bytes {
+                Some(valid_key) => {
+                    // Copy the validated key into `byte_array`
+                    byte_array.copy_from_slice(&valid_key);
+                    println!("AES Key: {:?}", byte_array);
+                }
+                None => {
+                    // if invalid input, promt again.
+                }
+            }
+
+            let key: GenericArray<u8, U32> = GenericArray::from(byte_array);
+            println!("{:?}", hex::encode(key));
         }
     }
 
     if args.len() > 1 && args[1] == "decrypt" {
+        if args.len() == 4 { // with key, take user input as key, secure.exe decrypt file key
+            let mut file_path = PathBuf::from(&current_dir);
+            file_path.push(&args[2]);
+            
+            let mut byte_array = [0u8; 32];
+            let input_bytes = validate_aes_key(&args[3]);
+
+            // Step 2: Copy the first 32 bytes (or pad with 0s if shorter)
+            match input_bytes {
+                Some(valid_key) => {
+                    // Copy the validated key into `byte_array`
+                    byte_array.copy_from_slice(&valid_key);
+                    println!("AES Key: {:?}", byte_array);
+                }
+                None => {
+                    // if invalid input, promt again.
+                }
+            }
+            let key: GenericArray<u8, U32> = GenericArray::from(byte_array);
+            file_decryption(file_path, key)?;
+        } else {
+            // figure something out
+        }
+    }
+
+    if args.len() > 1 && args[1] == "delete" {
         if args.len() > 2 {
             let mut file_path = PathBuf::from(&current_dir);
             file_path.push(&args[2]);
             
-            let key = GenericArray::from([0u8; 32]);
-            file_decryption(file_path, key)?;
+            file_deletion(file_path)?;
         }
     }
 
@@ -165,4 +221,51 @@ fn file_decryption(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Result
     file.write_all(&decrypted_data)?;
 
     Ok(())
+}
+
+fn file_deletion(file_path: PathBuf) -> io::Result<()> {
+    // Step 1: Open file in write mode
+    let mut file = OpenOptions::new().write(true).open(file_path.clone())?;
+    
+    // Step 2: Get the file size
+    let file_size = file.metadata()?.len();
+
+    // Step 3: Overwrite file multiple times with random data
+    let mut rng = rand::thread_rng();
+    for _ in 0..10 {
+        file.seek(SeekFrom::Start(0))?;
+        let random_data: Vec<u8> = (0..file_size).map(|_| rng.gen()).collect();
+        file.write_all(&random_data)?;
+        file.flush()?;  // Ensure data is written to disk
+    }
+
+    // Step 4: Delete the file
+    drop(file);  // Close file handle
+    remove_file(file_path)?;
+
+    Ok(())
+}
+
+fn validate_aes_key(input: &str) -> Option<GenericArray<u8, U32>> {
+    // Step 1: Check if input is exactly 64 characters (32 bytes in hex)
+    if input.len() != 64 {
+        eprintln!("Error: AES key must be exactly 64 hexadecimal characters.");
+        return None;
+    }
+
+    // Step 2: Attempt to parse as a 32-byte array
+    match <[u8; 32]>::from_hex(input) {
+        Ok(bytes) => Some(GenericArray::from(bytes)),
+        Err(_) => {
+            eprintln!("Error: Input contains invalid hexadecimal characters.");
+            None
+        }
+    }
+}
+
+fn generate_random_aes_key() -> GenericArray<u8, U32> {
+    let mut rng = rand::thread_rng();
+    let mut key_bytes = [0u8; 32];
+    rng.fill(&mut key_bytes); // Fill the array with random bytes
+    GenericArray::from(key_bytes) // Convert to GenericArray
 }
