@@ -1,53 +1,195 @@
-use aes::Aes256;
 use aes::cipher::{
-    BlockEncrypt, BlockDecrypt, KeyInit,
     generic_array::GenericArray
 };
 use std::env;
-use std::fs;
 use std::path::PathBuf;
-use std::path::Path;
-use std::fs::File;
 use std::io::{self, Write};
 //use block_padding::Pkcs7;
 //use aes::cipher;
 use typenum::U32;
-//use hex;
+use hex;
 use hex::FromHex;
 use std::fs::{OpenOptions, remove_file};
 use std::io::{Seek, SeekFrom};
 use rand::Rng;  // rand crate for generating random data
+use redb::{Database, ReadableTable, TableDefinition};
+use std::borrow::Borrow;
+use argon2::{self, Config};
 
-fn main() -> io::Result<()> {
+mod encryption;
+mod db_entry;
+mod my_key;
+
+const TABLE: TableDefinition<&str, &str> = TableDefinition::new("accounts");
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let args: Vec<String> = env::args().collect();
     dbg!(&args);
     let current_dir = env::current_dir().expect("Failed to get current directory");
+    
     //println!("Current directory: {:?}", current_dir);
     /*
     arg1 - function (help, encrypt, decrypt, delete)
     arg2 - file
     arg3 - key - must be 32 bytes
+    
     */
 
+    let salt = b"858dc1dfe1f";
+    let config = Config::default();
+    //let hash = argon2::hash_encoded(password, salt, &config).unwrap();
+    //assert!(matches);
+    //println!("{}",matches);
+    
     if args.len() == 1 {
-        // while true session with authentication 
-        // - create authentication database
+        let db = Database::open(db_var())?;
+        let mut while_flag = true;
+        let mut account_name: Option<String> = None; // Use Option<String> to store the username
+        let mut account_password: Option<String> = None; // Define account_password as Option<String>
+        
+        while while_flag {
+            println!("Enter 'q' to quit or write 'help' to see other commands:");
+            
+            let mut input = String::new();
+            io::stdin()
+            .read_line(&mut input)
+            .expect("Failed to read input");
+        
+        let command = input.trim();
+        
+        if command == "q" {
+            while_flag = false;
 
-    }
+        } else if command == "all_entries" {
+            read_all_entries(&db)?;
+
+        } else if command == "gen_key" {
+            let generated_key = generate_random_aes_key();
+            println!("{:?}", hex::encode(generated_key));   
+
+        } else if command == "help" {
+            help_menu();
+
+
+        } else if command == "encrypt" {
+            println!("Enter phrase you want to encrypt:");
+            let mut plaintext = String::new();
+            io::stdin()
+            .read_line(&mut plaintext)
+            .expect("Failed to read input");
+                println!("{:?}",db_entry::encrypt_db_entry(plaintext));
+
+
+        } else if command == "decrypt" {
+            println!("Enter ciphertext you want to decrypt:");
+            let mut ciphertext = String::new();
+            io::stdin()
+            .read_line(&mut ciphertext)
+            .expect("Failed to read input");
+        println!("{}",db_entry::decrypt_db_entry(ciphertext));
+
+        } else if command == "login" {
+            if account_name.is_none() {
+                
+                println!("Enter username you want for your account:");
+                let mut username = String::new();
+                io::stdin()
+                .read_line(&mut username)
+                .expect("Failed to read input");
+            
+                println!("Enter password you want for your account:");
+                let mut password = String::new();
+                io::stdin()
+                .read_line(&mut password)
+                .expect("Failed to read input");
+
+            let pre_account_name = Some(username.trim().to_string()); // Store trimmed username as a String
+            let pre_account_password = Some(password.trim().to_string()); // Store trimmed password as a String
+
+            let hash_password = argon2::hash_encoded(pre_account_password.clone().unwrap().as_bytes(), salt, &config).unwrap();
+            let hash_username = argon2::hash_encoded(pre_account_name.clone().unwrap().as_bytes(), salt, &config).unwrap();
+
+            let encrypted_username = db_entry::encrypt_db_entry(hash_username.clone());
+            let encrypted_password = db_entry::encrypt_db_entry(hash_password.clone());
+
+            // println!("username: {}", encrypted_username);
+            // println!("password: {}", encrypted_password);
+
+            // println!("&value: {}", &value);
+            // println!("pre_account_password: {:?}", pre_account_password.clone().unwrap().as_bytes());
+
+            match get_value_by_key(&db, &encrypted_username)? {
+                Some(value) => 
+                if argon2::verify_encoded(&db_entry::decrypt_db_entry(value.to_string()).to_string(), pre_account_password.clone().unwrap().as_bytes()).unwrap_or(false) {
+                        account_name = Some(username.trim().to_string()); // Store trimmed username as a String
+                        account_password = Some(password.trim().to_string()); // Store trimmed password as a String
+                        println!("user {} has authenticated!", account_name.clone().unwrap());
+                    } else {
+                        //TEST:
+                        println!("username: {}", encrypted_username);
+                        println!("&value: {}", &value);
+                        println!("pre_account_password: {:?}", pre_account_password.unwrap().as_bytes());
+
+                        // PROD:
+                        println!("Invalid Credentials.");
+                    },
+                None => println!("Key '{}' not found", &encrypted_username),
+            }
+        
+
+            } else {
+                println!("Already authenticated");
+            }
+        } else if command == "register" {
+            if account_name.is_none() {
+                
+                println!("Enter username you want for your account:");
+                let mut username = String::new();
+                io::stdin()
+                .read_line(&mut username)
+                .expect("Failed to read input");
+            
+                println!("Enter password you want for your account:");
+                let mut password = String::new();
+                io::stdin()
+                .read_line(&mut password)
+                .expect("Failed to read input");
+
+                println!("Enter password again:");
+                let mut password_again = String::new();
+                io::stdin()
+                .read_line(&mut password_again)
+                .expect("Failed to read input");          
+            
+                if password.trim() == password_again.trim() { // Check if passwords match
+                    account_name = Some(username.trim().to_string()); // Store trimmed username as a String
+                    account_password = Some(password.trim().to_string()); // Store trimmed password as a String
+
+                    println!("Your username is: {} and your password has been set.", account_name.as_ref().unwrap());
+                    let hash_password = argon2::hash_encoded(account_password.clone().unwrap().as_bytes(), salt, &config).unwrap();
+                    let hash_username = argon2::hash_encoded(account_name.clone().unwrap().as_bytes(), salt, &config).unwrap();
+
+                    let write_txn = db.begin_write()?;
+                    {
+                        let mut table = write_txn.open_table(TABLE)?;
+                        let encrypted_username = db_entry::encrypt_db_entry(hash_username.clone());
+                        let encrypted_password = db_entry::encrypt_db_entry(hash_password.clone());
+                        table.insert(encrypted_username.as_str(), encrypted_password.as_str())?;
+                    }
+                write_txn.commit()?;
+                } else {
+                    println!("Passwords do not match. Please try again.");
+                }
+            } else {
+                println!("Account name is already set to: {}", account_name.as_ref().unwrap());
+            }
+        }
+        }
+    } 
 
     if args.len() == 2 && args[1] == "help" {
-        println!("To use this software, use secure.exe <function> <file_path> <key>");
-        println!("Key size must be 32 bytes");
-        println!("If key is not entered, it will be generated randomly and given to you as a plaintext during encryption.");
-        println!("Key must be entered during decryption!");
-        println!("If user is authenticated then key will be tied to authentication, unless specified differently");
-        println!("functions: help, encrypt, decrypt, delete, encrypt-delete");
-        println!("help - Provides this same text wall.");
-        println!("encrypt - Encrypts the file, requires file path, key is optional");
-        println!("decrypt - Decrypts the file, requres file path, key is mandatory");
-        println!("delete - Deletes file securely");
-        println!("encrypt-delete - Encrypts the file and then deletes the initial file securely, requires file path, key is optional");
+        help_menu();
     }
 
     if args.len() > 1 && args[1] == "encrypt" {
@@ -57,7 +199,7 @@ fn main() -> io::Result<()> {
 
             let key = generate_random_aes_key();
             println!("{:?}", hex::encode(key));
-            file_encryption(file_path, key)?;
+            encryption::file_encryption(file_path, key)?;
         }
         if args.len() == 4 { // with key, take user input as key, secure.exe encrypt file key
 
@@ -82,7 +224,7 @@ fn main() -> io::Result<()> {
 
             let key: GenericArray<u8, U32> = GenericArray::from(byte_array);
             println!("{:?}", hex::encode(key));
-            file_encryption(file_path, key)?
+            encryption::file_encryption(file_path, key)?
         }
     }
 
@@ -106,7 +248,7 @@ fn main() -> io::Result<()> {
                 }
             }
             let key: GenericArray<u8, U32> = GenericArray::from(byte_array);
-            file_decryption(file_path, key)?;
+            encryption::file_decryption(file_path, key)?;
         } else {
             // figure something out
         }
@@ -128,7 +270,7 @@ fn main() -> io::Result<()> {
 
             let key = generate_random_aes_key();
             println!("{:?}", hex::encode(key));
-            file_encryption(file_path, key)?;
+            encryption::file_encryption(file_path, key)?;
             let mut file_path = PathBuf::from(&current_dir);
             file_path.push(&args[2]);
             //println!("File path: {:?}",file_path);
@@ -154,7 +296,7 @@ fn main() -> io::Result<()> {
             }
 
             let key: GenericArray<u8, U32> = GenericArray::from(byte_array);
-            file_encryption(file_path.clone(), key)?;
+            encryption::file_encryption(file_path.clone(), key)?;
             let mut file_path = PathBuf::from(&current_dir);
             file_path.push(&args[2]);
             //println!("File path: {:?}",file_path);
@@ -177,102 +319,6 @@ fn main() -> io::Result<()> {
     
 - Library 
 */
-fn file_encryption(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Result<()> {
-
-    // file name
-    let file_name = &file_path.file_stem().unwrap();
-    let new_file_name = format!("{}{}", file_name.to_str().unwrap(), ".encrypted.rt");
-    let contents = fs::read_to_string(file_path.clone())
-    .expect("Should have been able to read the file");
-    let mut plaintext = contents.clone().into_bytes();
-    
-    // Padding
-    let padding_length = 16 - (plaintext.len() % 16);
-    plaintext.extend(vec![padding_length as u8; padding_length]);
-    
-    
-    // cipher
-    let cipher = Aes256::new(&key);
-    let mut blocks: Vec<GenericArray<u8, aes::cipher::consts::U16>> = plaintext
-    .chunks_exact(16)
-    .map(|chunk| GenericArray::clone_from_slice(chunk))
-    .collect();
-    
-    // encrypting
-    for block in &mut blocks {
-        cipher.encrypt_block(block);
-    }
-    
-    // Convert encrypted blocks back to a byte array
-    let ciphertext: Vec<u8> = blocks.iter()
-    .flat_map(|block| block.as_slice())
-    .cloned().collect();
-    
-    // create new directory
-    let new_directory_name = "encrypted";
-    fs::create_dir_all(new_directory_name)?;
-    let new_file_path = Path::new(new_directory_name).join(new_file_name);
-    
-    // create output file
-    let mut file = File::create(&new_file_path)?;
-    file.write_all(&ciphertext)?;
-    drop(file_path);
-    drop(file);
-    Ok(())
-}
-
-fn file_decryption(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Result<()> {
-    // File name for decrypted output
-    let file_stem = file_path.file_stem().unwrap();
-    let file_stem_str = file_stem.to_str().unwrap();
-    println!("file_stem_str: {}",file_stem_str);
-    
-    // Remove the ".encrypted.rt" from the stem if it exists
-    let new_file_stem = file_stem_str.trim_end_matches(".encrypted");
-    println!("new_file_stem: {}",new_file_stem);
-
-    // Create the new file name with ".decrypted.txt" extension
-    let new_file_name = format!("{}", new_file_stem,);
-    println!("new_file_name: {}",new_file_name);
-    
-    // Read the encrypted file
-    let encrypted_data = fs::read(&file_path)?;
-    
-    // Cipher initialization
-    let cipher = Aes256::new(&key);
-    
-    // Decrypting
-    let mut blocks: Vec<GenericArray<u8, aes::cipher::consts::U16>> = encrypted_data
-        .chunks_exact(16)
-        .map(GenericArray::clone_from_slice)
-        .collect();
-
-    // Decrypt each block
-    for block in &mut blocks {
-        cipher.decrypt_block(block);
-    }
-
-    // Convert decrypted blocks back to a byte array
-    let mut decrypted_data: Vec<u8> = blocks.iter()
-        .flat_map(|block| block.as_slice())
-        .cloned()
-        .collect();
-    
-    // Remove padding
-    let padding_length = *decrypted_data.last().unwrap();
-    decrypted_data.truncate(decrypted_data.len() - padding_length as usize);
-
-    // Create output directory
-    let new_directory_name = "decrypted";
-    fs::create_dir_all(new_directory_name)?;
-    let new_file_path = Path::new(new_directory_name).join(new_file_name);
-
-    // Create output file
-    let mut file = File::create(&new_file_path)?;
-    file.write_all(&decrypted_data)?;
-
-    Ok(())
-}
 
 fn file_deletion(file_path: PathBuf) -> io::Result<()> {
     // Step 1: Open file in write mode
@@ -321,29 +367,62 @@ fn generate_random_aes_key() -> GenericArray<u8, U32> {
     GenericArray::from(key_bytes) // Convert to GenericArray
 }
 
-fn register(username: &str, password: &str, password_again: &str ) {
+fn help_menu() {
 
+    println!("To use this software, use secure.exe <function> <file_path> <key>");
+    println!("Key size must be 32 bytes");
+    println!("If key is not entered, it will be generated randomly and given to you as a plaintext during encryption.");
+    println!("Key must be entered during decryption!");
+    println!("If user is authenticated then key will be tied to authentication, unless specified differently");
+    println!("functions: help, encrypt, decrypt, delete, encrypt-delete");
+    println!("help - Provides this same text wall.");
+    println!("encrypt - Encrypts the file, requires file path, key is optional");
+    println!("decrypt - Decrypts the file, requres file path, key is mandatory");
+    println!("delete - Deletes file securely");
+    println!("encrypt-delete - Encrypts the file and then deletes the initial file securely, requires file path, key is optional");
+    
 }
 
-fn login(username: &str, password &str) {
-
+fn db_var() -> PathBuf {
+    PathBuf::from("secure_database.redb")
 }
 
-fn change_password(username: &str, password: &str, new_password: &str) {
+fn read_all_entries(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
+    // Start a read transaction
+    let read_txn = db.begin_read()?;
+    let table = read_txn.open_table(TABLE)?;
 
-}
+    // Iterate over all entries in the table
+    for entry in table.iter()? {
+        let (key, value) = entry?;
+        let key_str = key.borrow(); // This should return a &str
+        let value_str = value.borrow(); // This should return a &str
 
-fn create_auth_db() -> io::Result<()> {
+        // Print the key and value
+        println!("Key: {}, Value: {}", key_str.value(), value_str.value());
+
+    }
 
     Ok(())
 }
 
-fn read_auth_db() {
+fn get_value_by_key(db: &Database, key: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    // Open the database file
 
+    // Start a read transaction
+    let read_txn = db.begin_read()?;
+
+    // Open the table
+    let table = read_txn.open_table(TABLE)?;
+
+    //println!("Key in function is: {}", key);
+
+    // Get the value by key
+    match table.get(key)? {
+        Some(value) => {
+            //println!("value is: {}", value.value().to_string());
+            Ok(Some(value.value().to_string()))
+        },
+        None => Ok(None), // Key does not exist
+    }
 }
-
-fn write_auth_db() -> io::Result<()> {
-
-    Ok(())
-}
-

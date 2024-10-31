@@ -9,6 +9,9 @@ block-padding = "0.3.3"
 generic-array = "1.1.0"
 hex = "0.4.3"
 rand = "0.8.5"
+redb = "2.2.0"
+rust-argon2 = "2.1.0"
+secrecy = "0.10.3"
 typenum = "1.17.0"
 
 [[bin]]
