@@ -25,7 +25,7 @@ const TABLE: TableDefinition<&str, &str> = TableDefinition::new("accounts");
 fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let args: Vec<String> = env::args().collect();
-    dbg!(&args);
+    //dbg!(&args);
     let current_dir = env::current_dir().expect("Failed to get current directory");
     
     //println!("Current directory: {:?}", current_dir);
@@ -46,7 +46,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let db = Database::open(db_var())?;
         let mut while_flag = true;
         let mut account_name: Option<String> = None; // Use Option<String> to store the username
-        let mut account_password: Option<String> = None; // Define account_password as Option<String>
         
         while while_flag {
             println!("Enter 'q' to quit or write 'help' to see other commands:");
@@ -70,25 +69,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         } else if command == "help" {
             help_menu();
-
-
         } else if command == "encrypt" {
+            if account_name.is_none() {
+                println!("Please authenticate first.");
+            } else {
             println!("Enter phrase you want to encrypt:");
             let mut plaintext = String::new();
             io::stdin()
             .read_line(&mut plaintext)
             .expect("Failed to read input");
                 println!("{:?}",db_entry::encrypt_db_entry(plaintext));
-
-
+            }
         } else if command == "decrypt" {
-            println!("Enter ciphertext you want to decrypt:");
-            let mut ciphertext = String::new();
-            io::stdin()
-            .read_line(&mut ciphertext)
-            .expect("Failed to read input");
-        println!("{}",db_entry::decrypt_db_entry(ciphertext));
+            if account_name.is_none() {
+                println!("Please authenticate first.");
+            } else {
 
+                println!("Enter ciphertext you want to decrypt:");
+                let mut ciphertext = String::new();
+                io::stdin()
+                .read_line(&mut ciphertext)
+                .expect("Failed to read input");
+            println!("{}",db_entry::decrypt_db_entry(ciphertext));
+        }
         } else if command == "login" {
             if account_name.is_none() {
                 
@@ -107,34 +110,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let pre_account_name = Some(username.trim().to_string()); // Store trimmed username as a String
             let pre_account_password = Some(password.trim().to_string()); // Store trimmed password as a String
 
-            let hash_password = argon2::hash_encoded(pre_account_password.clone().unwrap().as_bytes(), salt, &config).unwrap();
             let hash_username = argon2::hash_encoded(pre_account_name.clone().unwrap().as_bytes(), salt, &config).unwrap();
 
             let encrypted_username = db_entry::encrypt_db_entry(hash_username.clone());
-            let encrypted_password = db_entry::encrypt_db_entry(hash_password.clone());
-
-            // println!("username: {}", encrypted_username);
-            // println!("password: {}", encrypted_password);
-
-            // println!("&value: {}", &value);
-            // println!("pre_account_password: {:?}", pre_account_password.clone().unwrap().as_bytes());
 
             match get_value_by_key(&db, &encrypted_username)? {
                 Some(value) => 
                 if argon2::verify_encoded(&db_entry::decrypt_db_entry(value.to_string()).to_string(), pre_account_password.clone().unwrap().as_bytes()).unwrap_or(false) {
                         account_name = Some(username.trim().to_string()); // Store trimmed username as a String
-                        account_password = Some(password.trim().to_string()); // Store trimmed password as a String
                         println!("user {} has authenticated!", account_name.clone().unwrap());
                     } else {
                         //TEST:
-                        println!("username: {}", encrypted_username);
-                        println!("&value: {}", &value);
-                        println!("pre_account_password: {:?}", pre_account_password.unwrap().as_bytes());
+                        //println!("username: {}", encrypted_username);
+                        //println!("&value: {}", &value);
+                        //println!("pre_account_password: {:?}", pre_account_password.unwrap().as_bytes());
 
                         // PROD:
                         println!("Invalid Credentials.");
                     },
-                None => println!("Key '{}' not found", &encrypted_username),
+                None => println!("Invalid Credentials."),
             }
         
 
@@ -164,7 +158,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             
                 if password.trim() == password_again.trim() { // Check if passwords match
                     account_name = Some(username.trim().to_string()); // Store trimmed username as a String
-                    account_password = Some(password.trim().to_string()); // Store trimmed password as a String
+                    let account_password = Some(password.trim().to_string()); // Store trimmed password as a String
 
                     println!("Your username is: {} and your password has been set.", account_name.as_ref().unwrap());
                     let hash_password = argon2::hash_encoded(account_password.clone().unwrap().as_bytes(), salt, &config).unwrap();
@@ -369,17 +363,17 @@ fn generate_random_aes_key() -> GenericArray<u8, U32> {
 
 fn help_menu() {
 
-    println!("To use this software, use secure.exe <function> <file_path> <key>");
-    println!("Key size must be 32 bytes");
-    println!("If key is not entered, it will be generated randomly and given to you as a plaintext during encryption.");
-    println!("Key must be entered during decryption!");
-    println!("If user is authenticated then key will be tied to authentication, unless specified differently");
-    println!("functions: help, encrypt, decrypt, delete, encrypt-delete");
-    println!("help - Provides this same text wall.");
-    println!("encrypt - Encrypts the file, requires file path, key is optional");
-    println!("decrypt - Decrypts the file, requres file path, key is mandatory");
-    println!("delete - Deletes file securely");
-    println!("encrypt-delete - Encrypts the file and then deletes the initial file securely, requires file path, key is optional");
+    println!("To use this software, use secure.exe <function> <file_path> <key>
+    Key size must be 32 bytes
+    If key is not entered, it will be generated randomly and given to you as a plaintext during encryption.
+    Key must be entered during decryption!
+    If user is authenticated then key will be tied to authentication, unless specified differently
+    functions: help, encrypt, decrypt, delete, encrypt-delete
+    help - Provides this same text wall.
+    encrypt - Encrypts the file, requires file path, key is optional
+    decrypt - Decrypts the file, requres file path, key is mandatory
+    delete - Deletes file securely
+    encrypt-delete - Encrypts the file and then deletes the initial file securely, requires file path, key is optional");
     
 }
 

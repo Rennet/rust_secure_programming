@@ -1,8 +1,14 @@
 use secrecy::{SecretBox};
 
-pub fn secret_key() -> SecretBox<String> {
+pub fn secret_key() -> SecretBox<[u8; 32]> {
     // Create a SecretBox containing the AES key
-    let secret_key = SecretBox::new(Box::new("83a335cf2e4ef3e74cfe506d496e97a3e263d012fd3edc0bb8c24a77ffda463f".to_string()));
+    let secret_key: SecretBox<[u8; 32]>  = SecretBox::new(Box::new([
+        0x38, 0x33, 0x61, 0x33, 0x33, 0x35, 0x63,
+        0x66, 0x32, 0x65, 0x34, 0x65, 0x66, 0x33,
+        0x65, 0x37, 0x34, 0x63, 0x66, 0x65, 0x35,
+        0x30, 0x36, 0x64, 0x34, 0x39, 0x36, 0x65,
+        0x39, 0x37, 0x61, 0x34,
+    ]));
     
     // Return the SecretBox
     secret_key
