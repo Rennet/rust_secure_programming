@@ -7,19 +7,21 @@ use std::fs;
 use std::path::PathBuf;
 use std::fs::File;
 use std::io::{self, Write};
-//use block_padding::Pkcs7;
-//use aes::cipher;
 use typenum::U32;
-//use redb::{Database, ReadableTable, TableDefinition};
+
 
 
 pub fn file_encryption(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Result<()> {
 
     // file name
+    //println!("{}",&file_path.display());
     let file_name = &file_path.file_stem().unwrap();
+    //println!("{:?}",&file_name);
+
     let new_file_name = format!("{}{}", file_name.to_str().unwrap(), ".encrypted.rt");
-    let contents = fs::read_to_string(file_path.clone())
-    .expect("Should have been able to read the file");
+    //println!("{}",&new_file_name);
+
+    let contents = fs::read_to_string(file_path.clone()).expect("Should have been able to read the file");
     let mut plaintext = contents.clone().into_bytes();
     
     // Padding

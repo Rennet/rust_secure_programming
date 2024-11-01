@@ -65,10 +65,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         } else if command == "gen_key" {
             let generated_key = generate_random_aes_key();
-            println!("{:?}", hex::encode(generated_key));   
+            println!("{:?}", hex::encode(generated_key));
+
+        } else if command == "set_db_key" {
+            println!("Please enter valid AES key that you want to encrypt database with");
+            let mut db_key = String::new();
+            io::stdin()
+            .read_line(&mut db_key)
+            .expect("Failed to read input");
+            println!("{:?}", db_key.as_bytes().to_vec());
 
         } else if command == "help" {
             help_menu();
+        } else if command == "decrypt-file" {
+        } else if command == "encrypt-file-rng-key" {
+            if account_name.is_none() {
+                println!("Please authenticate first");
+            } else {
+                
+                let mut file_path = PathBuf::from(&current_dir);
+                
+                let key = generate_random_aes_key();
+                
+                println!("Enter file you want to encrypt:");
+                let mut file_name = String::new();
+                io::stdin()
+                .read_line(&mut file_name)
+                .expect("Failed to read input");
+                
+                file_path.push(&file_name.trim());
+                //println!("file path: {}", &file_path.display());
+                println!("{:?}", hex::encode(&key));
+                encryption::file_encryption(file_path, key)?;
+            }
+
+        } else if command == "encrypt-file" {    
         } else if command == "encrypt" {
             if account_name.is_none() {
                 println!("Please authenticate first.");
@@ -137,7 +168,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         } else if command == "register" {
             if account_name.is_none() {
-                
                 println!("Enter username you want for your account:");
                 let mut username = String::new();
                 io::stdin()

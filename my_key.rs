@@ -13,3 +13,10 @@ pub fn secret_key() -> SecretBox<[u8; 32]> {
     // Return the SecretBox
     secret_key
 }
+
+/*
+pub fn update_key() {
+
+
+}
+*/
