@@ -20,27 +20,27 @@ mod encryption;
 mod db_entry;
 mod my_key;
 
+// ENCRYPTION/DECRYPTION --------------------------------
+/*
+    
+    1. Implement AES for Encryption +
+    2. Implement AES for Decryption +
+    3. Memory in key for guest user, key saved? for authenticated user
+    4. Secure Original File Deletion + 
+    
+- Library 
+*/
+
+
 const TABLE: TableDefinition<&str, &str> = TableDefinition::new("accounts");
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let args: Vec<String> = env::args().collect();
-    //dbg!(&args);
     let current_dir = env::current_dir().expect("Failed to get current directory");
     
-    //println!("Current directory: {:?}", current_dir);
-    /*
-    arg1 - function (help, encrypt, decrypt, delete)
-    arg2 - file
-    arg3 - key - must be 32 bytes
-    
-    */
-
     let salt = b"858dc1dfe1f";
     let config = Config::default();
-    //let hash = argon2::hash_encoded(password, salt, &config).unwrap();
-    //assert!(matches);
-    //println!("{}",matches);
     
     if args.len() == 1 {
         let db = Database::open(db_var())?;
@@ -77,7 +77,63 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         } else if command == "help" {
             help_menu();
+        } else if command == "delete-file" {
+            if account_name.is_none() {
+                println!("Please authenticate first");
+            } else {
+                println!("Enter file you want to delete:");
+                let mut file_name = String::new();
+                io::stdin()
+                .read_line(&mut file_name)
+                .expect("Failed to read input");
+            
+                let mut file_path = PathBuf::from(&current_dir);
+                file_path.push(&file_name.trim());
+            
+                file_deletion(file_path)?;
+            }
         } else if command == "decrypt-file" {
+            if account_name.is_none() {
+                println!("Please authenticate first");
+            } else {
+
+                println!("Enter file you want to decrypt:");
+                let mut file_name = String::new();
+                io::stdin()
+                .read_line(&mut file_name)
+                .expect("Failed to read input");
+            
+                let mut file_path = PathBuf::from(&current_dir);
+                file_path.push(&file_name.trim());
+                
+                let mut byte_array = [0u8; 32];
+
+                println!("Enter the key for the file you want to decrypt:");
+                let mut entered_key = String::new();
+                io::stdin()
+                .read_line(&mut entered_key)
+                .expect("Failed to read input");
+
+                let input_bytes = validate_aes_key(&entered_key.trim());
+    
+                // Step 2: Copy the first 32 bytes (or pad with 0s if shorter)
+                match input_bytes {
+                    Some(valid_key) => {
+                        // Copy the validated key into `byte_array`
+                        byte_array.copy_from_slice(&valid_key);
+                        println!("AES Key: {:?}", byte_array);
+                    }
+                    None => {
+                        // if invalid input, promt again.
+                    }
+                }
+    
+                let key: GenericArray<u8, U32> = GenericArray::from(byte_array);
+
+                println!("{:?}", hex::encode(&key));
+                encryption::file_decryption(file_path, key)?;
+            }
+
         } else if command == "encrypt-file-rng-key" {
             if account_name.is_none() {
                 println!("Please authenticate first");
@@ -100,6 +156,47 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
         } else if command == "encrypt-file" {    
+            if account_name.is_none() {
+                println!("Please authenticate first");
+            } else {
+
+                println!("Enter file you want to encrypt:");
+                let mut file_name = String::new();
+                io::stdin()
+                .read_line(&mut file_name)
+                .expect("Failed to read input");
+            
+                let mut file_path = PathBuf::from(&current_dir);
+                file_path.push(&file_name.trim());
+                
+                let mut byte_array = [0u8; 32];
+
+                println!("Enter the key for the file you want to encrypt:");
+                let mut entered_key = String::new();
+                io::stdin()
+                .read_line(&mut entered_key)
+                .expect("Failed to read input");
+
+                let input_bytes = validate_aes_key(&entered_key.trim());
+    
+                // Step 2: Copy the first 32 bytes (or pad with 0s if shorter)
+                match input_bytes {
+                    Some(valid_key) => {
+                        // Copy the validated key into `byte_array`
+                        byte_array.copy_from_slice(&valid_key);
+                        println!("AES Key: {:?}", byte_array);
+                    }
+                    None => {
+                        // if invalid input, promt again.
+                    }
+                }
+    
+                let key: GenericArray<u8, U32> = GenericArray::from(byte_array);
+                
+                println!("{:?}", hex::encode(&key));
+                encryption::file_encryption(file_path, key)?;
+            }
+
         } else if command == "encrypt" {
             if account_name.is_none() {
                 println!("Please authenticate first.");
@@ -212,137 +309,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     } 
 
-    if args.len() == 2 && args[1] == "help" {
-        help_menu();
-    }
 
-    if args.len() > 1 && args[1] == "encrypt" {
-        if args.len() == 3 { // without key, generate random key secure.exe encrypt file ...
-            let mut file_path = PathBuf::from(&current_dir);
-            file_path.push(&args[2]);
-
-            let key = generate_random_aes_key();
-            println!("{:?}", hex::encode(key));
-            encryption::file_encryption(file_path, key)?;
-        }
-        if args.len() == 4 { // with key, take user input as key, secure.exe encrypt file key
-
-            let mut file_path = PathBuf::from(&current_dir);
-            file_path.push(&args[2]);
-            
-            // make a random 32 bit long byte array 
-            let mut byte_array = [0u8; 32];
-            let input_bytes = validate_aes_key(&args[3]);
-
-            // Step 2: Copy the first 32 bytes (or pad with 0s if shorter)
-            match input_bytes {
-                Some(valid_key) => {
-                    // Copy the validated key into `byte_array`
-                    byte_array.copy_from_slice(&valid_key);
-                    println!("AES Key: {:?}", byte_array);
-                }
-                None => {
-                    // if invalid input, promt again.
-                }
-            }
-
-            let key: GenericArray<u8, U32> = GenericArray::from(byte_array);
-            println!("{:?}", hex::encode(key));
-            encryption::file_encryption(file_path, key)?
-        }
-    }
-
-    if args.len() > 1 && args[1] == "decrypt" {
-        if args.len() == 4 { // with key, take user input as key, secure.exe decrypt file key
-            let mut file_path = PathBuf::from(&current_dir);
-            file_path.push(&args[2]);
-            
-            let mut byte_array = [0u8; 32];
-            let input_bytes = validate_aes_key(&args[3]);
-
-            // Step 2: Copy the first 32 bytes (or pad with 0s if shorter)
-            match input_bytes {
-                Some(valid_key) => {
-                    // Copy the validated key into `byte_array`
-                    byte_array.copy_from_slice(&valid_key);
-                    println!("AES Key: {:?}", byte_array);
-                }
-                None => {
-                    // if invalid input, promt again.
-                }
-            }
-            let key: GenericArray<u8, U32> = GenericArray::from(byte_array);
-            encryption::file_decryption(file_path, key)?;
-        } else {
-            // figure something out
-        }
-    }
-
-    if args.len() > 1 && args[1] == "delete" {
-        if args.len() > 2 {
-            let mut file_path = PathBuf::from(&current_dir);
-            file_path.push(&args[2]);
-            
-            file_deletion(file_path)?;
-        }
-    }
-
-    if args.len() > 1 && args[1] == "encrypt-delete" {
-        if args.len() == 3 { // without key, generate random key secure.exe encrypt file ...
-            let mut file_path = PathBuf::from(&current_dir);
-            file_path.push(&args[2]);
-
-            let key = generate_random_aes_key();
-            println!("{:?}", hex::encode(key));
-            encryption::file_encryption(file_path, key)?;
-            let mut file_path = PathBuf::from(&current_dir);
-            file_path.push(&args[2]);
-            //println!("File path: {:?}",file_path);
-            file_deletion(file_path)?;
-        }
-        if args.len() == 4 { // with key, take user input as key, secure.exe encrypt file key
-            let mut file_path = PathBuf::from(&current_dir);
-            file_path.push(&args[2]);
-            // make a random 32 bit long byte array 
-            let mut byte_array = [0u8; 32];
-            let input_bytes = validate_aes_key(&args[3]);
-
-            // Step 2: Copy the first 32 bytes (or pad with 0s if shorter)
-            match input_bytes {
-                Some(valid_key) => {
-                    // Copy the validated key into `byte_array`
-                    byte_array.copy_from_slice(&valid_key);
-                    println!("AES Key: {:?}", byte_array);
-                }
-                None => {
-                    // if invalid input, promt again.
-                }
-            }
-
-            let key: GenericArray<u8, U32> = GenericArray::from(byte_array);
-            encryption::file_encryption(file_path.clone(), key)?;
-            let mut file_path = PathBuf::from(&current_dir);
-            file_path.push(&args[2]);
-            //println!("File path: {:?}",file_path);
-            file_deletion(file_path)?;
-            println!("AES Key: {:?}", hex::encode(key));
-        }
-    }
-
-    Ok(())
+Ok(())
 }
-    
-    
-    // ENCRYPTION/DECRYPTION --------------------------------
-    /*
-    
-    1. Implement AES for Encryption +
-    2. Implement AES for Decryption +
-    3. Memory in key for guest user, key saved? for authenticated user
-    4. Secure Original File Deletion + 
-    
-- Library 
-*/
 
 fn file_deletion(file_path: PathBuf) -> io::Result<()> {
     // Step 1: Open file in write mode
@@ -393,17 +362,20 @@ fn generate_random_aes_key() -> GenericArray<u8, U32> {
 
 fn help_menu() {
 
-    println!("To use this software, use secure.exe <function> <file_path> <key>
-    Key size must be 32 bytes
-    If key is not entered, it will be generated randomly and given to you as a plaintext during encryption.
-    Key must be entered during decryption!
-    If user is authenticated then key will be tied to authentication, unless specified differently
-    functions: help, encrypt, decrypt, delete, encrypt-delete
-    help - Provides this same text wall.
-    encrypt - Encrypts the file, requires file path, key is optional
-    decrypt - Decrypts the file, requres file path, key is mandatory
-    delete - Deletes file securely
-    encrypt-delete - Encrypts the file and then deletes the initial file securely, requires file path, key is optional");
+    println!("To use this software, please authenticate.
+    Usable commands:
+    q                           - Quit the program.
+    gen_key                     - Generate a 64 bit AES key.
+    help                        - Show help menu that contains the commands.
+    delete-file                 - Secure file deletion, 10 iterations of rewrite before deletion. Prompts file path.
+    decrypt-file                - Decrypts a file encrypted by this software. Prompts file path and key.
+    encrypt-file                - Encrypts a file. Prompts file path and key.
+    encrypt-file-rng-key        - Encrypts a file and randomly generates key. Prompts file path and returns the key.
+    encrypt                     - Encrypts a message. Prompts text and key.
+    decrypt                     - Decrypts a message. Prompts text and key.
+    login                       - Login to use the software.
+    register                    - Simple registration. Prompts username to be registered and password.
+    ");
     
 }
 

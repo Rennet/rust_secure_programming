@@ -21,8 +21,9 @@ pub fn file_encryption(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Re
     let new_file_name = format!("{}{}", file_name.to_str().unwrap(), ".encrypted.rt");
     //println!("{}",&new_file_name);
 
-    let contents = fs::read_to_string(file_path.clone()).expect("Should have been able to read the file");
-    let mut plaintext = contents.clone().into_bytes();
+    let contents = fs::read(file_path.clone()).expect("Should have been able to read the file");
+    //println!("{:?}",&contents);
+    let mut plaintext = contents.clone();
     
     // Padding
     let padding_length = 16 - (plaintext.len() % 16);
