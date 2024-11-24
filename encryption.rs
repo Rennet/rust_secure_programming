@@ -176,6 +176,11 @@ mod tests {
     use std::fs;
     use std::io;
     use std::path::PathBuf;
+    use std::fs::OpenOptions;
+    use std::io::SeekFrom;
+    use std::fs::remove_file;
+    use rand::Rng;
+
     
     fn file_deletion(file_path: PathBuf) -> io::Result<()> {
         // Step 1: Open file in write mode
