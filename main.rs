@@ -18,15 +18,10 @@ use std::process;
 use rand::Rng;  // rand crate for generating random data
 use argon2::{self, Config};
 use rpassword::read_password;
-use google_authenticator::{GoogleAuthenticator, ErrorCorrectionLevel, GA_AUTH, get_code, verify_code};
-use totp_rs::{TOTP, Algorithm};
-use chrono::*;
+use google_authenticator::{GoogleAuthenticator, ErrorCorrectionLevel, GA_AUTH, verify_code};
 use secrecy::{SecretBox, ExposeSecret};
-use qrcode::QrCode;
-use qrcode::types::Color;
-use image::{Luma, DynamicImage};
-use native_dialog::FileDialog;
 use open;
+use tempfile::NamedTempFile; // Import NamedTempFile instead of tempfile()
 use rand::distributions::Alphanumeric;
 use base32::encode;
 use base32::Alphabet::Rfc4648;
@@ -420,49 +415,149 @@ fn help_menu() {
 }
 
 
-/*
-        let mut count = 0;
-        let mut credentials_ptr = std::ptr::null_mut();
-        unsafe {
-            CredEnumerateW(
-                None,
-                CRED_ENUMERATE_ALL_CREDENTIALS,
-                &mut count,
-                &mut credentials_ptr,
-            )?;
-        
-            let credentials =
-            std::slice::from_raw_parts::<&CREDENTIALW>(credentials_ptr as _, count as usize);
-            
-            for credential in credentials {
-                println!("/* CREDENTIALW */");
-                println!("Type: {:?}", credential.Type);
-                if !credential.TargetName.is_null() {
-                    println!("Target: {}", credential.TargetName.display());
-                }
-                if !credential.UserName.is_null() {
-                    println!("User name: {}", credential.UserName.display());
-                }
-                if credential.CredentialBlobSize > 0 {
-                    let password = unsafe {
-                        std::slice::from_raw_parts(
-                            credential.CredentialBlob as *const u8,
-                            credential.CredentialBlobSize as usize,
-                        )
-                    };
-        
-                    // Convert password bytes to string if possible (assuming it's UTF-8)
-                    match String::from_utf8(password.to_vec()) {
-                        Ok(password_str) => println!("Password: {}", password_str),
-                        Err(_) => println!("Password: [Binary Data]"),
-                    }
-                }
-        
-                println!();
-            }
-            
-            CredFree(std::mem::transmute::<*mut *mut _, *const _>(
-                credentials_ptr,
-            ));
-        }
-        */
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{self, Write};
+    use std::fs::remove_dir_all;
+    use std::fs::create_dir_all;
+
+    const TEST_FILES_DIR: &str = "test_files";
+
+    fn create_local_file_with_content(file_name: &str, content: &[u8]) -> std::io::Result<PathBuf> {
+        // Ensure the directory exists
+        create_dir_all(TEST_FILES_DIR)?;
+
+        let file_path = PathBuf::from(TEST_FILES_DIR).join(file_name);
+        let mut file = File::create(&file_path)?;
+        file.write_all(content)?;
+        file.flush()?; // Ensure the data is written to disk
+        Ok(file_path)
+    }
+
+    #[test]
+    fn test_valid_aes_key() {
+        let valid_key = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+        let result = validate_aes_key(valid_key);
+        assert!(result.is_some(), "Valid key should return Some with the GenericArray");
+        assert_eq!(result.unwrap().len(), 32, "The length of the AES key should be 32 bytes");
+    }
+
+    #[test]
+    fn test_invalid_length_key_too_short() {
+        let short_key = "00112233445566778899aabbccddeeff0011223344556677";
+        let result = validate_aes_key(short_key);
+        assert!(result.is_none(), "Key with less than 64 characters should return None");
+    }
+
+    #[test]
+    fn test_invalid_length_key_too_long() {
+        let long_key = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff00";
+        let result = validate_aes_key(long_key);
+        assert!(result.is_none(), "Key with more than 64 characters should return None");
+    }
+
+    #[test]
+    fn test_invalid_hex_key() {
+        let invalid_hex_key = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeefz"; // 'z' is not valid hex
+        let result = validate_aes_key(invalid_hex_key);
+        assert!(result.is_none(), "Key with invalid hexadecimal characters should return None");
+    }
+
+    #[test]
+    fn test_empty_key() {
+        let empty_key = "";
+        let result = validate_aes_key(empty_key);
+        assert!(result.is_none(), "Empty key should return None");
+    }
+
+    #[test]
+    fn test_edge_case_one_character_short() {
+        let key_one_short = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeff";
+        let result = validate_aes_key(key_one_short);
+        assert!(result.is_none(), "Key with 63 characters should return None");
+    }
+
+    #[test]
+    fn test_edge_case_one_character_long() {
+        let key_one_long = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff1";
+        let result = validate_aes_key(key_one_long);
+        assert!(result.is_none(), "Key with 65 characters should return None");
+    }
+
+    //-----------------------------------------------------------------------------------------
+
+    #[test]
+    fn test_file_deletion_success() {
+        // Arrange: Create a local file with some content
+        let file_content = b"Test content for file deletion";
+        let file_path = create_local_file_with_content("test_deletion_success.txt", file_content).unwrap();
+
+        // Ensure the file exists before calling the function
+        assert!(file_path.exists(), "File should exist before deletion");
+
+        // Act: Call the file_deletion function
+        let result = file_deletion(file_path.clone());
+
+        // Assert: Ensure the result is Ok and the file is deleted
+        assert!(result.is_ok(), "file_deletion should succeed");
+        assert!(!file_path.exists(), "File should be deleted after file_deletion");
+    }
+
+    #[test]
+    fn test_file_deletion_empty_file() {
+        // Arrange: Create an empty local file
+        let file_path = create_local_file_with_content("test_empty_file.txt", b"").unwrap();
+
+        // Ensure the file exists before calling the function
+        assert!(file_path.exists(), "File should exist before deletion");
+
+        // Act: Call the file_deletion function on an empty file
+        let result = file_deletion(file_path.clone());
+
+        // Assert: Ensure the result is Ok and the file is deleted
+        assert!(result.is_ok(), "file_deletion should succeed on an empty file");
+        assert!(!file_path.exists(), "File should be deleted after file_deletion");
+    }
+
+    #[test]
+    fn test_file_deletion_with_random_data() {
+        // Arrange: Create a file with random data
+        let file_content: Vec<u8> = (0..1024).map(|_| rand::random::<u8>()).collect();
+        let file_path = create_local_file_with_content("test_random_data.txt", &file_content).unwrap();
+
+        // Ensure the file exists before calling the function
+        assert!(file_path.exists(), "File should exist before deletion");
+
+        // Act: Call the file_deletion function
+        let result = file_deletion(file_path.clone());
+
+        // Assert: Ensure the result is Ok and the file is deleted
+        assert!(result.is_ok(), "file_deletion should succeed");
+        assert!(!file_path.exists(), "File should be deleted after file_deletion");
+    }
+
+    #[test]
+    fn test_file_deletion_after_multiple_overwrites() {
+        // Arrange: Create a file with content to be overwritten
+        let file_content = b"Test content for overwriting";
+        let file_path = create_local_file_with_content("test_overwrites.txt", file_content).unwrap();
+
+        // Ensure the file exists before calling the function
+        assert!(file_path.exists(), "File should exist before deletion");
+
+        // Act: Call the file_deletion function, which overwrites the file multiple times
+        let result = file_deletion(file_path.clone());
+
+        // Assert: Ensure the result is Ok and the file is deleted
+        assert!(result.is_ok(), "file_deletion should succeed after overwriting");
+        assert!(!file_path.exists(), "File should be deleted after file_deletion");
+    }
+
+    // Cleanup function to remove all test files after tests run
+    #[test]
+    fn cleanup_test_files() {
+        // Clean up the test_files directory
+        remove_dir_all(TEST_FILES_DIR).unwrap_or_else(|_| println!("Failed to clean up test files."));
+    }
+}
