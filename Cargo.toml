@@ -20,11 +20,8 @@ rand = "0.8.5"
 rpassword = "7.3.1"
 rust-argon2 = "2.1.0"
 secrecy = "0.10.3"
-tempfile = "3.14.0"
-totp-rs = {version = "5.6.0", features = ["qr"]}
 typenum = "1.17.0"
 wincredentials = "0.2.0"
-windows = {version = "0.58" , features = ["Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_System_Com"]}
 
 [[bin]]
 name = "secure"

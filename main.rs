@@ -1,11 +1,7 @@
-use aes::cipher::{
-    generic_array::GenericArray
-};
+use aes::cipher::{generic_array::GenericArray};
 use std::env;
 use std::path::PathBuf;
 use std::io::{self, Write};
-//use block_padding::Pkcs7;
-//use aes::cipher;
 use typenum::U32;
 use hex;
 use hex::FromHex;
@@ -21,7 +17,6 @@ use rpassword::read_password;
 use google_authenticator::{GoogleAuthenticator, ErrorCorrectionLevel, GA_AUTH, verify_code};
 use secrecy::{SecretBox, ExposeSecret};
 use open;
-use tempfile::NamedTempFile; // Import NamedTempFile instead of tempfile()
 use rand::distributions::Alphanumeric;
 use base32::encode;
 use base32::Alphabet::Rfc4648;
@@ -121,6 +116,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // Print out the secret to verify it's correct
                         println!("Secret: {}", base32_secret.expose_secret());
                         println!("Generating QR code, please do not close it without scanning, there is no way to get it again.");
+
                         let random_filename: String = rand::thread_rng()
                         .sample_iter(&Alphanumeric)
                         .take(20) // Specify the length of the random string
@@ -418,7 +414,7 @@ fn help_menu() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{self, Write};
+    use std::io::{Write};
     use std::fs::remove_dir_all;
     use std::fs::create_dir_all;
 
@@ -560,4 +556,9 @@ mod tests {
         // Clean up the test_files directory
         remove_dir_all(TEST_FILES_DIR).unwrap_or_else(|_| println!("Failed to clean up test files."));
     }
+
+    //---------------------------------------------------------------------------------
+
+
+
 }

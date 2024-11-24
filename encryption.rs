@@ -8,8 +8,11 @@ use std::path::PathBuf;
 use std::fs::File;
 use std::io::{self, Write};
 use typenum::U32;
-
-
+use rand::Rng;
+use std::fs::remove_file;
+use std::io::SeekFrom;
+use std::io::Seek;
+use std::fs::OpenOptions;
 
 pub fn file_encryption(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Result<()> {
 
@@ -101,6 +104,8 @@ pub fn file_decryption(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Re
     // Create output file
     let mut file = File::create(&new_file_name)?;
     file.write_all(&decrypted_data)?;
+    drop(file_path);
+    drop(file);
 
     Ok(())
 }
@@ -166,4 +171,155 @@ pub fn text_decryption(ciphertext: String, key: GenericArray<u8, U32>) -> String
 
     //String result
     String::from_utf8(decrypted_data).expect("Decrypted data is not valid UTF-8").trim().to_string()
+}
+
+fn file_deletion(file_path: PathBuf) -> io::Result<()> {
+    // Step 1: Open file in write mode
+    let mut file = OpenOptions::new().write(true).open(file_path.clone())?;
+    
+    // Step 2: Get the file size
+    let file_size = file.metadata()?.len();
+
+    // Step 3: Overwrite file multiple times with random data
+    let mut rng = rand::thread_rng();
+    for _ in 0..10 {
+        file.seek(SeekFrom::Start(0))?;
+        let random_data: Vec<u8> = (0..file_size).map(|_| rng.gen()).collect();
+        file.write_all(&random_data)?;
+        file.flush()?;  // Ensure data is written to disk
+    }
+
+    // Step 4: Delete the file
+    drop(file);  // Close file handle
+    remove_file(file_path)?;
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aes::cipher::generic_array::GenericArray;
+    use std::fs;
+    use std::io;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_file_encryption_and_decryption() -> io::Result<()> {
+        // Generate test key
+        let key = GenericArray::from_slice(&[0u8; 32]); // Replace with a more realistic key for production
+
+        // Create a temporary file for testing
+        let test_file_path = PathBuf::from("test_file.txt");
+        let test_data = b"Hello, secure world!";
+        fs::write(&test_file_path, test_data)?;
+
+        // Encrypt the file
+        file_encryption(test_file_path.clone(), key.clone())?;
+        println!("1");
+
+        // Ensure encrypted file exists
+        let encrypted_file_path = PathBuf::from("test_file.encrypted.rt");
+        assert!(
+            encrypted_file_path.exists(),
+            "Encrypted file not found: {}",
+            encrypted_file_path.display()
+        );
+
+        println!("2");
+        // Decrypt the file
+        file_decryption(encrypted_file_path.clone(), key.clone())?;
+
+        println!("3");
+        // Ensure decrypted file exists and matches original content
+        let decrypted_file_path = PathBuf::from("test_file.txt");
+        assert!(
+            decrypted_file_path.exists(),
+            "Decrypted file not found: {}",
+            decrypted_file_path.display()
+        );
+        println!("4");
+        let decrypted_data = fs::read(&decrypted_file_path)?;
+        assert_eq!(
+            decrypted_data, test_data,
+            "Decrypted data does not match original content"
+        );
+        println!("5");
+
+        // Cleanup
+        fs::remove_file(encrypted_file_path)?;
+        fs::remove_file(decrypted_file_path)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_text_encryption_and_decryption() {
+        // Generate test key
+        let key = GenericArray::from_slice(&[0u8; 32]); // Replace with a more realistic key for production
+
+        // Test data
+        let plaintext = "Hello, secure world!".to_string();
+
+        // Encrypt the text
+        let ciphertext = text_encryption(plaintext.clone(), key.clone());
+
+        // Decrypt the text
+        let decrypted_text = text_decryption(ciphertext, key.clone());
+
+        // Verify the result
+        assert_eq!(plaintext, decrypted_text);
+    }
+
+    #[test]
+    fn test_file_deletion_success() -> io::Result<()> {
+        // Create a temporary file for testing
+        let test_file_path = PathBuf::from("test_file_to_delete.txt");
+        fs::write(&test_file_path, b"Temporary file content")?;
+
+        // Ensure the file exists
+        assert!(
+            test_file_path.exists(),
+            "Test file not found: {}",
+            test_file_path.display()
+        );
+
+        // Call file_deletion
+        file_deletion(test_file_path.clone())?;
+
+        // Ensure the file has been deleted
+        assert!(
+            !test_file_path.exists(),
+            "File was not deleted: {}",
+            test_file_path.display()
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_file_deletion_empty_file() -> io::Result<()> {
+        // Create an empty file
+        let test_file_path = PathBuf::from("empty_file_to_delete.txt");
+        File::create(&test_file_path)?;
+
+        // Ensure the file exists
+        assert!(
+            test_file_path.exists(),
+            "Empty test file not found: {}",
+            test_file_path.display()
+        );
+
+        // Call file_deletion
+        file_deletion(test_file_path.clone())?;
+
+        // Ensure the file has been deleted
+        assert!(
+            !test_file_path.exists(),
+            "Empty file was not deleted: {}",
+            test_file_path.display()
+        );
+
+        Ok(())
+    }
 }
