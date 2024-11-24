@@ -180,6 +180,7 @@ mod tests {
     use std::io::SeekFrom;
     use std::fs::remove_file;
     use rand::Rng;
+    use std::io::Seek;
 
     
     fn file_deletion(file_path: PathBuf) -> io::Result<()> {
