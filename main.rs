@@ -28,7 +28,7 @@ mod encryption;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // Define DB
-    let username_db = "secureprogramming-user-test6";
+    let username_db = "secureprogramming-user-test7";
     let salt = b"858dc1dfe1f";
     let config = Config::default();
 
@@ -91,7 +91,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 io::stdin()
                 .read_line(&mut password)
                 .expect("Failed to read input");
-            
+                
                 println!("Enter password again:");
                 let mut password_again = String::new();
                 io::stdin()

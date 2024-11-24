@@ -8,11 +8,6 @@ use std::path::PathBuf;
 use std::fs::File;
 use std::io::{self, Write};
 use typenum::U32;
-use rand::Rng;
-use std::fs::remove_file;
-use std::io::SeekFrom;
-use std::io::Seek;
-use std::fs::OpenOptions;
 
 pub fn file_encryption(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Result<()> {
 
@@ -204,7 +199,7 @@ mod tests {
     
         Ok(())
     }
-    
+
     #[test]
     fn test_file_encryption_and_decryption() -> io::Result<()> {
         // Generate test key
