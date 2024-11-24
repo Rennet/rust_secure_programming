@@ -425,10 +425,12 @@ mod tests {
         create_dir_all(TEST_FILES_DIR)?;
 
         let file_path = PathBuf::from(TEST_FILES_DIR).join(file_name);
-        let mut file = File::create(&file_path)?;
-        file.write_all(content)?;
-        file.flush()?; // Ensure the data is written to disk
-        Ok(file_path)
+        let path = PathBuf::from(file_path);
+        {
+        let mut file = File::create(&path)?; // File is scoped to ensure it gets dropped
+        file.write_all(content)?; 
+        } // File is dropped here
+        Ok(path)
     }
 
     #[test]
@@ -486,6 +488,7 @@ mod tests {
     #[test]
     fn test_file_deletion_success() {
         // Arrange: Create a local file with some content
+        thread::sleep(Duration::new(1, 0));
         let file_content = b"Test content for file deletion";
         let file_path = create_local_file_with_content("test_deletion_success.txt", file_content).unwrap();
 
@@ -503,12 +506,14 @@ mod tests {
     #[test]
     fn test_file_deletion_empty_file() {
         // Arrange: Create an empty local file
+        thread::sleep(Duration::new(1, 0));
         let file_path = create_local_file_with_content("test_empty_file.txt", b"").unwrap();
-
+        
         // Ensure the file exists before calling the function
         assert!(file_path.exists(), "File should exist before deletion");
-
+        
         // Act: Call the file_deletion function on an empty file
+        thread::sleep(Duration::new(1, 0));
         let result = file_deletion(file_path.clone());
 
         // Assert: Ensure the result is Ok and the file is deleted
@@ -537,6 +542,7 @@ mod tests {
     fn test_file_deletion_after_multiple_overwrites() {
         // Arrange: Create a file with content to be overwritten
         let file_content = b"Test content for overwriting";
+        thread::sleep(Duration::new(1, 0));
         let file_path = create_local_file_with_content("test_overwrites.txt", file_content).unwrap();
 
         // Ensure the file exists before calling the function
@@ -544,7 +550,7 @@ mod tests {
 
         // Act: Call the file_deletion function, which overwrites the file multiple times
         let result = file_deletion(file_path.clone());
-
+        
         // Assert: Ensure the result is Ok and the file is deleted
         assert!(result.is_ok(), "file_deletion should succeed after overwriting");
         assert!(!file_path.exists(), "File should be deleted after file_deletion");

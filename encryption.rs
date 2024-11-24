@@ -173,28 +173,6 @@ pub fn text_decryption(ciphertext: String, key: GenericArray<u8, U32>) -> String
     String::from_utf8(decrypted_data).expect("Decrypted data is not valid UTF-8").trim().to_string()
 }
 
-fn file_deletion(file_path: PathBuf) -> io::Result<()> {
-    // Step 1: Open file in write mode
-    let mut file = OpenOptions::new().write(true).open(file_path.clone())?;
-    
-    // Step 2: Get the file size
-    let file_size = file.metadata()?.len();
-
-    // Step 3: Overwrite file multiple times with random data
-    let mut rng = rand::thread_rng();
-    for _ in 0..10 {
-        file.seek(SeekFrom::Start(0))?;
-        let random_data: Vec<u8> = (0..file_size).map(|_| rng.gen()).collect();
-        file.write_all(&random_data)?;
-        file.flush()?;  // Ensure data is written to disk
-    }
-
-    // Step 4: Delete the file
-    drop(file);  // Close file handle
-    remove_file(file_path)?;
-
-    Ok(())
-}
 
 #[cfg(test)]
 mod tests {
@@ -203,7 +181,30 @@ mod tests {
     use std::fs;
     use std::io;
     use std::path::PathBuf;
-
+    
+    fn file_deletion(file_path: PathBuf) -> io::Result<()> {
+        // Step 1: Open file in write mode
+        let mut file = OpenOptions::new().write(true).open(file_path.clone())?;
+        
+        // Step 2: Get the file size
+        let file_size = file.metadata()?.len();
+    
+        // Step 3: Overwrite file multiple times with random data
+        let mut rng = rand::thread_rng();
+        for _ in 0..10 {
+            file.seek(SeekFrom::Start(0))?;
+            let random_data: Vec<u8> = (0..file_size).map(|_| rng.gen()).collect();
+            file.write_all(&random_data)?;
+            file.flush()?;  // Ensure data is written to disk
+        }
+    
+        // Step 4: Delete the file
+        drop(file);  // Close file handle
+        remove_file(file_path)?;
+    
+        Ok(())
+    }
+    
     #[test]
     fn test_file_encryption_and_decryption() -> io::Result<()> {
         // Generate test key
