@@ -104,3 +104,66 @@ pub fn file_decryption(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Re
 
     Ok(())
 }
+
+pub fn text_encryption(plaintext: String, key: GenericArray<u8, U32>) -> String {
+
+    let contents = plaintext.into_bytes();
+    let mut plaintext = contents.clone();
+    
+    // Padding
+    let padding_length = 16 - (plaintext.len() % 16);
+    plaintext.extend(vec![padding_length as u8; padding_length]);
+
+    // cipher
+    let cipher = Aes256::new(&key);
+
+    let mut blocks: Vec<GenericArray<u8, aes::cipher::consts::U16>> = plaintext
+    .chunks_exact(16)
+    .map(|chunk| GenericArray::clone_from_slice(chunk))
+    .collect();
+
+    // encrypting
+    for block in &mut blocks {
+        cipher.encrypt_block(block);
+    }
+
+    // Convert encrypted blocks back to a byte array
+    let ciphertext: Vec<u8> = blocks.iter()
+    .flat_map(|block| block.as_slice())
+    .cloned().collect();
+
+    // string output
+    hex::encode(ciphertext).to_string()
+}
+
+pub fn text_decryption(ciphertext: String, key: GenericArray<u8, U32>) -> String {
+    // Read the encrypted file
+    let encrypted_data = hex::decode(ciphertext.trim()).expect("Failed to decode hex text");
+    
+    // cipher
+    let cipher = Aes256::new(&key);
+
+    // Decrypting
+    let mut blocks: Vec<GenericArray<u8, aes::cipher::consts::U16>> = encrypted_data
+        .chunks_exact(16)
+        .map(GenericArray::clone_from_slice)
+        .collect();
+
+    // Decrypt each block
+    for block in &mut blocks {
+        cipher.decrypt_block(block);
+    }
+
+    // Convert decrypted blocks back to a byte array
+    let mut decrypted_data: Vec<u8> = blocks.iter()
+        .flat_map(|block| block.as_slice())
+        .cloned()
+        .collect();
+    
+    // Remove padding
+    let padding_length = *decrypted_data.last().unwrap();
+    decrypted_data.truncate(decrypted_data.len() - padding_length as usize);
+
+    //String result
+    String::from_utf8(decrypted_data).expect("Decrypted data is not valid UTF-8").trim().to_string()
+}

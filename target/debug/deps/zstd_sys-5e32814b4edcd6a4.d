@@ -1,9 +1,0 @@
-C:\Users\renne\OneDrive\Desktop\rust\projects\rust_secure_programming\target\debug\deps\libzstd_sys-5e32814b4edcd6a4.rmeta: C:\Users\renne\.cargo\registry\src\index.crates.io-6f17d22bba15001f\zstd-sys-2.0.13+zstd.1.5.6\src\lib.rs C:\Users\renne\.cargo\registry\src\index.crates.io-6f17d22bba15001f\zstd-sys-2.0.13+zstd.1.5.6\src\bindings_zstd_experimental.rs C:\Users\renne\.cargo\registry\src\index.crates.io-6f17d22bba15001f\zstd-sys-2.0.13+zstd.1.5.6\src\bindings_zdict_experimental.rs
-
-C:\Users\renne\OneDrive\Desktop\rust\projects\rust_secure_programming\target\debug\deps\libzstd_sys-5e32814b4edcd6a4.rlib: C:\Users\renne\.cargo\registry\src\index.crates.io-6f17d22bba15001f\zstd-sys-2.0.13+zstd.1.5.6\src\lib.rs C:\Users\renne\.cargo\registry\src\index.crates.io-6f17d22bba15001f\zstd-sys-2.0.13+zstd.1.5.6\src\bindings_zstd_experimental.rs C:\Users\renne\.cargo\registry\src\index.crates.io-6f17d22bba15001f\zstd-sys-2.0.13+zstd.1.5.6\src\bindings_zdict_experimental.rs
-
-C:\Users\renne\OneDrive\Desktop\rust\projects\rust_secure_programming\target\debug\deps\zstd_sys-5e32814b4edcd6a4.d: C:\Users\renne\.cargo\registry\src\index.crates.io-6f17d22bba15001f\zstd-sys-2.0.13+zstd.1.5.6\src\lib.rs C:\Users\renne\.cargo\registry\src\index.crates.io-6f17d22bba15001f\zstd-sys-2.0.13+zstd.1.5.6\src\bindings_zstd_experimental.rs C:\Users\renne\.cargo\registry\src\index.crates.io-6f17d22bba15001f\zstd-sys-2.0.13+zstd.1.5.6\src\bindings_zdict_experimental.rs
-
-C:\Users\renne\.cargo\registry\src\index.crates.io-6f17d22bba15001f\zstd-sys-2.0.13+zstd.1.5.6\src\lib.rs:
-C:\Users\renne\.cargo\registry\src\index.crates.io-6f17d22bba15001f\zstd-sys-2.0.13+zstd.1.5.6\src\bindings_zstd_experimental.rs:
-C:\Users\renne\.cargo\registry\src\index.crates.io-6f17d22bba15001f\zstd-sys-2.0.13+zstd.1.5.6\src\bindings_zdict_experimental.rs:

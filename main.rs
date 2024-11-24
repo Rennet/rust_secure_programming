@@ -11,92 +11,132 @@ use hex;
 use hex::FromHex;
 use std::fs::{OpenOptions, remove_file};
 use std::io::{Seek, SeekFrom};
+use std::process;
 use rand::Rng;  // rand crate for generating random data
-use redb::{Database, ReadableTable, TableDefinition};
-use std::borrow::Borrow;
 use argon2::{self, Config};
+use rpassword::read_password;
+
+use wincredentials::*;
 
 mod encryption;
-mod db_entry;
-mod my_key;
-
-// ENCRYPTION/DECRYPTION --------------------------------
-/*
-    
-    1. Implement AES for Encryption +
-    2. Implement AES for Decryption +
-    3. Memory in key for guest user, key saved? for authenticated user
-    4. Secure Original File Deletion + 
-    
-- Library 
-*/
-
-
-const TABLE: TableDefinition<&str, &str> = TableDefinition::new("accounts");
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-
-    let args: Vec<String> = env::args().collect();
-    let current_dir = env::current_dir().expect("Failed to get current directory");
     
+    // Define DB
+    let username_db = "secureprogramming-user-test2";
     let salt = b"858dc1dfe1f";
     let config = Config::default();
     
-    if args.len() == 1 {
-        let db = Database::open(db_var())?;
-        let mut while_flag = true;
-        let mut account_name: Option<String> = None; // Use Option<String> to store the username
-        
-        while while_flag {
-            println!("Enter 'q' to quit or write 'help' to see other commands:");
+    // Check if database exists, if not, then prompt to registration. 
+    match read_credential(username_db) {
+        Ok(credential) => {
+            println!("Please authenticate to use this software.");
+            println!("Enter username:");
+                let mut username = String::new();
+                io::stdin()
+                .read_line(&mut username)
+                .expect("Failed to read input");
+                let username = username.trim();
             
-            let mut input = String::new();
-            io::stdin()
-            .read_line(&mut input)
-            .expect("Failed to read input");
+                println!("Enter password:");
+                let password = read_password().expect("Failed to read password");
+                let password = password.trim();
+
+            // Verifying credentials
+                if argon2::verify_encoded(&credential.username, username.as_bytes()).unwrap() {
+                    if argon2::verify_encoded(&credential.secret, password.as_bytes()).unwrap() {
+                        
+                    } else {
+                        println!("Authentication failed.");
+                        process::exit(0); 
+                    }
+                } else {
+                    println!("Authentication failed.");
+                    process::exit(0);
+                }
+        }
+        Err(error) => {
+            println!("Error: {error}");
+            println!("No credential found. Prompting for registration...");
+            println!("Enter username you want for your account:");
+                let mut username = String::new();
+                io::stdin()
+                .read_line(&mut username)
+                .expect("Failed to read input");
+            
+                println!("Enter password you want for your account:");
+                let mut password = String::new();
+                io::stdin()
+                .read_line(&mut password)
+                .expect("Failed to read input");
+            
+                println!("Enter password again:");
+                let mut password_again = String::new();
+                io::stdin()
+                .read_line(&mut password_again)
+                .expect("Failed to read input");          
         
+                if password.trim() == password_again.trim(){
+                    let account_name = Some(username.trim().to_string()); // Store trimmed username as a String
+                    let account_password = Some(password.trim().to_string()); // Store trimmed password as a String
+
+                    println!("Your username is: {} and your password has been set.", account_name.as_ref().unwrap());
+                    let hash_password = argon2::hash_encoded(account_password.clone().unwrap().as_bytes(), salt, &config).unwrap();
+                    let hash_username = argon2::hash_encoded(account_name.clone().unwrap().as_bytes(), salt, &config).unwrap();
+
+                    let _ = write_credential(username_db, credential::Credential{
+                    username: hash_username.to_owned(),
+                    secret: hash_password.to_owned(), 
+                    });
+                }
+
+        }
+    }
+    let args: Vec<String> = env::args().collect();
+    let current_dir = env::current_dir().expect("Failed to get current directory");
+      
+      
+      if args.len() == 1 {
+          let mut while_flag = true;
+          
+        while while_flag {
+              println!("Enter 'q' to quit or write 'help' to see other commands:");
+              
+              let mut input = String::new();
+              io::stdin()
+              .read_line(&mut input)
+              .expect("Failed to read input");
+            
         let command = input.trim();
-        
-        if command == "q" {
-            while_flag = false;
-
-        } else if command == "all_entries" {
-            read_all_entries(&db)?;
-
-        } else if command == "gen_key" {
-            let generated_key = generate_random_aes_key();
-            println!("{:?}", hex::encode(generated_key));
-
-        } else if command == "set_db_key" {
-            println!("Please enter valid AES key that you want to encrypt database with");
-            let mut db_key = String::new();
-            io::stdin()
-            .read_line(&mut db_key)
-            .expect("Failed to read input");
+            
+            if command == "q" {
+                while_flag = false;
+                    
+            } else if command == "gen_key" {
+                let generated_key = generate_random_aes_key();
+                println!("{:?}", hex::encode(generated_key));  
+            } else if command == "set_db_key" {
+                println!("Please enter valid AES key that you want to encrypt database with");
+                let mut db_key = String::new();
+                io::stdin()
+                .read_line(&mut db_key)
+                .expect("Failed to read input");
             println!("{:?}", db_key.as_bytes().to_vec());
-
-        } else if command == "help" {
-            help_menu();
-        } else if command == "delete-file" {
-            if account_name.is_none() {
-                println!("Please authenticate first");
-            } else {
+            
+            } else if command == "help" {
+                help_menu();
+            } else if command == "delete-file" {
                 println!("Enter file you want to delete:");
                 let mut file_name = String::new();
                 io::stdin()
                 .read_line(&mut file_name)
                 .expect("Failed to read input");
             
-                let mut file_path = PathBuf::from(&current_dir);
-                file_path.push(&file_name.trim());
+            let mut file_path = PathBuf::from(&current_dir);
+            file_path.push(&file_name.trim());
             
-                file_deletion(file_path)?;
-            }
-        } else if command == "decrypt-file" {
-            if account_name.is_none() {
-                println!("Please authenticate first");
-            } else {
-
+            file_deletion(file_path)?;
+            } else if command == "decrypt-file" {
                 println!("Enter file you want to decrypt:");
                 let mut file_name = String::new();
                 io::stdin()
@@ -107,7 +147,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 file_path.push(&file_name.trim());
                 
                 let mut byte_array = [0u8; 32];
-
+                
                 println!("Enter the key for the file you want to decrypt:");
                 let mut entered_key = String::new();
                 io::stdin()
@@ -115,203 +155,147 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .expect("Failed to read input");
 
                 let input_bytes = validate_aes_key(&entered_key.trim());
-    
+
                 // Step 2: Copy the first 32 bytes (or pad with 0s if shorter)
                 match input_bytes {
-                    Some(valid_key) => {
-                        // Copy the validated key into `byte_array`
-                        byte_array.copy_from_slice(&valid_key);
-                        println!("AES Key: {:?}", byte_array);
-                    }
-                    None => {
-                        // if invalid input, promt again.
-                    }
+                Some(valid_key) => {
+                    // Copy the validated key into `byte_array`
+                    byte_array.copy_from_slice(&valid_key);
+                    println!("AES Key: {:?}", byte_array);
                 }
-    
+                None => {
+                    // if invalid input, promt again.
+                }
+            }
                 let key: GenericArray<u8, U32> = GenericArray::from(byte_array);
 
                 println!("{:?}", hex::encode(&key));
                 encryption::file_decryption(file_path, key)?;
-            }
+            
+                
 
-        } else if command == "encrypt-file-rng-key" {
-            if account_name.is_none() {
-                println!("Please authenticate first");
-            } else {
-                
+            } else if command == "encrypt-file-rng-key" {
                 let mut file_path = PathBuf::from(&current_dir);
-                
                 let key = generate_random_aes_key();
                 
-                println!("Enter file you want to encrypt:");
-                let mut file_name = String::new();
-                io::stdin()
-                .read_line(&mut file_name)
-                .expect("Failed to read input");
+                        println!("Enter file you want to encrypt:");
+                        let mut file_name = String::new();
+                        io::stdin()
+                        .read_line(&mut file_name)
+                        .expect("Failed to read input");
+                        
+                        file_path.push(&file_name.trim());
+                        //println!("file path: {}", &file_path.display());
+                        println!("{:?}", hex::encode(&key));
+                        encryption::file_encryption(file_path, key)?;
+            } else if command == "encrypt-file" {    
+                    println!("Enter file you want to encrypt:");
+                    let mut file_name = String::new();
+                    io::stdin()
+                    .read_line(&mut file_name)
+                    .expect("Failed to read input");
                 
-                file_path.push(&file_name.trim());
-                //println!("file path: {}", &file_path.display());
-                println!("{:?}", hex::encode(&key));
-                encryption::file_encryption(file_path, key)?;
-            }
+                    let mut file_path = PathBuf::from(&current_dir);
+                    file_path.push(&file_name.trim());
+                    
+                    let mut byte_array = [0u8; 32];
 
-        } else if command == "encrypt-file" {    
-            if account_name.is_none() {
-                println!("Please authenticate first");
-            } else {
+                    println!("Enter the key for the file you want to encrypt:");
+                    let mut entered_key = String::new();
+                    io::stdin()
+                    .read_line(&mut entered_key)
+                    .expect("Failed to read input");
 
-                println!("Enter file you want to encrypt:");
-                let mut file_name = String::new();
+                    let input_bytes = validate_aes_key(&entered_key.trim());
+        
+                    // Step 2: Copy the first 32 bytes (or pad with 0s if shorter)
+                    match input_bytes {
+                        Some(valid_key) => {
+                            // Copy the validated key into `byte_array`
+                            byte_array.copy_from_slice(&valid_key);
+                            println!("AES Key: {:?}", byte_array);
+                        }
+                        None => {
+                            // if invalid input, promt again.
+                        }
+                    }
+        
+                    let key: GenericArray<u8, U32> = GenericArray::from(byte_array);
+                    
+                    println!("{:?}", hex::encode(&key));
+                    encryption::file_encryption(file_path, key)?;
+            } else if command == "encrypt" {
+                println!("Enter phrase you want to encrypt:");
+                let mut plaintext = String::new();
                 io::stdin()
-                .read_line(&mut file_name)
+                .read_line(&mut plaintext)
                 .expect("Failed to read input");
-            
-                let mut file_path = PathBuf::from(&current_dir);
-                file_path.push(&file_name.trim());
-                
+
+                println!("Enter a key, or leave empty for randomly generated one.");
                 let mut byte_array = [0u8; 32];
-
-                println!("Enter the key for the file you want to encrypt:");
                 let mut entered_key = String::new();
                 io::stdin()
                 .read_line(&mut entered_key)
                 .expect("Failed to read input");
 
                 let input_bytes = validate_aes_key(&entered_key.trim());
-    
+        
                 // Step 2: Copy the first 32 bytes (or pad with 0s if shorter)
                 match input_bytes {
                     Some(valid_key) => {
                         // Copy the validated key into `byte_array`
                         byte_array.copy_from_slice(&valid_key);
-                        println!("AES Key: {:?}", byte_array);
-                    }
-                    None => {
+                        //println!("AES Key: {:?}", byte_array);
+                        }
+                        None => {
                         // if invalid input, promt again.
+                        }
                     }
-                }
-    
-                let key: GenericArray<u8, U32> = GenericArray::from(byte_array);
-                
-                println!("{:?}", hex::encode(&key));
-                encryption::file_encryption(file_path, key)?;
-            }
-
-        } else if command == "encrypt" {
-            if account_name.is_none() {
-                println!("Please authenticate first.");
-            } else {
-            println!("Enter phrase you want to encrypt:");
-            let mut plaintext = String::new();
-            io::stdin()
-            .read_line(&mut plaintext)
-            .expect("Failed to read input");
-                println!("{:?}",db_entry::encrypt_db_entry(plaintext));
-            }
-        } else if command == "decrypt" {
-            if account_name.is_none() {
-                println!("Please authenticate first.");
-            } else {
-
-                println!("Enter ciphertext you want to decrypt:");
-                let mut ciphertext = String::new();
-                io::stdin()
-                .read_line(&mut ciphertext)
-                .expect("Failed to read input");
-            println!("{}",db_entry::decrypt_db_entry(ciphertext));
-        }
-        } else if command == "login" {
-            if account_name.is_none() {
-                
-                println!("Enter username you want for your account:");
-                let mut username = String::new();
-                io::stdin()
-                .read_line(&mut username)
-                .expect("Failed to read input");
-            
-                println!("Enter password you want for your account:");
-                let mut password = String::new();
-                io::stdin()
-                .read_line(&mut password)
-                .expect("Failed to read input");
-
-            let pre_account_name = Some(username.trim().to_string()); // Store trimmed username as a String
-            let pre_account_password = Some(password.trim().to_string()); // Store trimmed password as a String
-
-            let hash_username = argon2::hash_encoded(pre_account_name.clone().unwrap().as_bytes(), salt, &config).unwrap();
-
-            let encrypted_username = db_entry::encrypt_db_entry(hash_username.clone());
-
-            match get_value_by_key(&db, &encrypted_username)? {
-                Some(value) => 
-                if argon2::verify_encoded(&db_entry::decrypt_db_entry(value.to_string()).to_string(), pre_account_password.clone().unwrap().as_bytes()).unwrap_or(false) {
-                        account_name = Some(username.trim().to_string()); // Store trimmed username as a String
-                        println!("user {} has authenticated!", account_name.clone().unwrap());
-                    } else {
-                        //TEST:
-                        //println!("username: {}", encrypted_username);
-                        //println!("&value: {}", &value);
-                        //println!("pre_account_password: {:?}", pre_account_password.unwrap().as_bytes());
-
-                        // PROD:
-                        println!("Invalid Credentials.");
-                    },
-                None => println!("Invalid Credentials."),
-            }
         
+                    let key: GenericArray<u8, U32> = GenericArray::from(byte_array);
+                    //println!("{:?}", hex::encode(&key));
 
-            } else {
-                println!("Already authenticated");
-            }
-        } else if command == "register" {
-            if account_name.is_none() {
-                println!("Enter username you want for your account:");
-                let mut username = String::new();
-                io::stdin()
-                .read_line(&mut username)
-                .expect("Failed to read input");
+                println!("{}",encryption::text_encryption(plaintext, key));
+
+
+            } else if command == "decrypt" {
+                    println!("Enter ciphertext you want to decrypt:");
+                    let mut ciphertext = String::new();
+                    io::stdin()
+                    .read_line(&mut ciphertext)
+                    .expect("Failed to read input");
+
+                    println!("Enter a key, or leave empty for randomly generated one.");
+                    let mut byte_array = [0u8; 32];
+                    let mut entered_key = String::new();
+                    io::stdin()
+                    .read_line(&mut entered_key)
+                    .expect("Failed to read input");
+
+                    let input_bytes = validate_aes_key(&entered_key.trim());
             
-                println!("Enter password you want for your account:");
-                let mut password = String::new();
-                io::stdin()
-                .read_line(&mut password)
-                .expect("Failed to read input");
-
-                println!("Enter password again:");
-                let mut password_again = String::new();
-                io::stdin()
-                .read_line(&mut password_again)
-                .expect("Failed to read input");          
+                    // Step 2: Copy the first 32 bytes (or pad with 0s if shorter)
+                    match input_bytes {
+                        Some(valid_key) => {
+                            // Copy the validated key into `byte_array`
+                            byte_array.copy_from_slice(&valid_key);
+                            //println!("AES Key: {:?}", byte_array);
+                            }
+                            None => {
+                            // if invalid input, promt again.
+                            }
+                        }
             
-                if password.trim() == password_again.trim() { // Check if passwords match
-                    account_name = Some(username.trim().to_string()); // Store trimmed username as a String
-                    let account_password = Some(password.trim().to_string()); // Store trimmed password as a String
+                        let key: GenericArray<u8, U32> = GenericArray::from(byte_array);
+                        //println!("{:?}", hex::encode(&key));
 
-                    println!("Your username is: {} and your password has been set.", account_name.as_ref().unwrap());
-                    let hash_password = argon2::hash_encoded(account_password.clone().unwrap().as_bytes(), salt, &config).unwrap();
-                    let hash_username = argon2::hash_encoded(account_name.clone().unwrap().as_bytes(), salt, &config).unwrap();
-
-                    let write_txn = db.begin_write()?;
-                    {
-                        let mut table = write_txn.open_table(TABLE)?;
-                        let encrypted_username = db_entry::encrypt_db_entry(hash_username.clone());
-                        let encrypted_password = db_entry::encrypt_db_entry(hash_password.clone());
-                        table.insert(encrypted_username.as_str(), encrypted_password.as_str())?;
-                    }
-                write_txn.commit()?;
-                } else {
-                    println!("Passwords do not match. Please try again.");
+                    println!("{}",encryption::text_decryption(ciphertext, key));
                 }
-            } else {
-                println!("Account name is already set to: {}", account_name.as_ref().unwrap());
             }
         }
-        }
+        Ok(())
     } 
 
-
-Ok(())
-}
 
 fn file_deletion(file_path: PathBuf) -> io::Result<()> {
     // Step 1: Open file in write mode
@@ -379,46 +363,50 @@ fn help_menu() {
     
 }
 
-fn db_var() -> PathBuf {
-    PathBuf::from("secure_database.redb")
-}
 
-fn read_all_entries(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
-    // Start a read transaction
-    let read_txn = db.begin_read()?;
-    let table = read_txn.open_table(TABLE)?;
-
-    // Iterate over all entries in the table
-    for entry in table.iter()? {
-        let (key, value) = entry?;
-        let key_str = key.borrow(); // This should return a &str
-        let value_str = value.borrow(); // This should return a &str
-
-        // Print the key and value
-        println!("Key: {}, Value: {}", key_str.value(), value_str.value());
-
-    }
-
-    Ok(())
-}
-
-fn get_value_by_key(db: &Database, key: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
-    // Open the database file
-
-    // Start a read transaction
-    let read_txn = db.begin_read()?;
-
-    // Open the table
-    let table = read_txn.open_table(TABLE)?;
-
-    //println!("Key in function is: {}", key);
-
-    // Get the value by key
-    match table.get(key)? {
-        Some(value) => {
-            //println!("value is: {}", value.value().to_string());
-            Ok(Some(value.value().to_string()))
-        },
-        None => Ok(None), // Key does not exist
-    }
-}
+/*
+        let mut count = 0;
+        let mut credentials_ptr = std::ptr::null_mut();
+        unsafe {
+            CredEnumerateW(
+                None,
+                CRED_ENUMERATE_ALL_CREDENTIALS,
+                &mut count,
+                &mut credentials_ptr,
+            )?;
+        
+            let credentials =
+            std::slice::from_raw_parts::<&CREDENTIALW>(credentials_ptr as _, count as usize);
+            
+            for credential in credentials {
+                println!("/* CREDENTIALW */");
+                println!("Type: {:?}", credential.Type);
+                if !credential.TargetName.is_null() {
+                    println!("Target: {}", credential.TargetName.display());
+                }
+                if !credential.UserName.is_null() {
+                    println!("User name: {}", credential.UserName.display());
+                }
+                if credential.CredentialBlobSize > 0 {
+                    let password = unsafe {
+                        std::slice::from_raw_parts(
+                            credential.CredentialBlob as *const u8,
+                            credential.CredentialBlobSize as usize,
+                        )
+                    };
+        
+                    // Convert password bytes to string if possible (assuming it's UTF-8)
+                    match String::from_utf8(password.to_vec()) {
+                        Ok(password_str) => println!("Password: {}", password_str),
+                        Err(_) => println!("Password: [Binary Data]"),
+                    }
+                }
+        
+                println!();
+            }
+            
+            CredFree(std::mem::transmute::<*mut *mut _, *const _>(
+                credentials_ptr,
+            ));
+        }
+        */
