@@ -11,10 +11,25 @@ use hex;
 use hex::FromHex;
 use std::fs::{OpenOptions, remove_file};
 use std::io::{Seek, SeekFrom};
+use std::fs::File;
+use std::thread;
+use std::time::Duration;
 use std::process;
 use rand::Rng;  // rand crate for generating random data
 use argon2::{self, Config};
 use rpassword::read_password;
+use google_authenticator::{GoogleAuthenticator, ErrorCorrectionLevel, GA_AUTH, get_code, verify_code};
+use totp_rs::{TOTP, Algorithm};
+use chrono::*;
+use secrecy::{SecretBox, ExposeSecret};
+use qrcode::QrCode;
+use qrcode::types::Color;
+use image::{Luma, DynamicImage};
+use native_dialog::FileDialog;
+use open;
+use rand::distributions::Alphanumeric;
+use base32::encode;
+use base32::Alphabet::Rfc4648;
 
 use wincredentials::*;
 
@@ -23,13 +38,17 @@ mod encryption;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // Define DB
-    let username_db = "secureprogramming-user-test2";
+    let username_db = "secureprogramming-user-test6";
     let salt = b"858dc1dfe1f";
     let config = Config::default();
+
+    let secret = SecretBox::new(Box::new("YU38IWO1K3B9W0DIWBID3LDEVFXZGG54".to_string()));
+    let base32_secret = SecretBox::new(Box::new(encode(Rfc4648 { padding: true }, secret.expose_secret().as_bytes())));
+    let auth = GoogleAuthenticator::new();
     
     // Check if database exists, if not, then prompt to registration. 
     match read_credential(username_db) {
-        Ok(credential) => {
+        Ok(credential) => { //credentials exist
             println!("Please authenticate to use this software.");
             println!("Enter username:");
                 let mut username = String::new();
@@ -45,7 +64,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Verifying credentials
                 if argon2::verify_encoded(&credential.username, username.as_bytes()).unwrap() {
                     if argon2::verify_encoded(&credential.secret, password.as_bytes()).unwrap() {
+                        println!("Enter MFA TOTP:");
+                        let mut code = String::new();
+                            io::stdin()
+                            .read_line(&mut code)
+                            .expect("Failed to read input");
+                        let mfa_code = code.trim();
                         
+                        if verify_code!(&base32_secret.expose_secret(), &mfa_code, 1, 0) {
+                            println!("Authentication successful")
+                        } else {
+                            println!("Authentication failed.");
+                        process::exit(0); 
+                        }
+                        // Successful authentication
                     } else {
                         println!("Authentication failed.");
                         process::exit(0); 
@@ -55,7 +87,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     process::exit(0);
                 }
         }
-        Err(error) => {
+        Err(error) => { // No credentials exist
             println!("Error: {error}");
             println!("No credential found. Prompting for registration...");
             println!("Enter username you want for your account:");
@@ -88,6 +120,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     username: hash_username.to_owned(),
                     secret: hash_password.to_owned(), 
                     });
+
+                    let qr_code = auth.qr_code(base32_secret.expose_secret(), "Secure_Programming", &username, 200, 200, ErrorCorrectionLevel::High)
+                        .unwrap();
+                        // Print out the secret to verify it's correct
+                        println!("Secret: {}", base32_secret.expose_secret());
+                        println!("Generating QR code, please do not close it without scanning, there is no way to get it again.");
+                        let random_filename: String = rand::thread_rng()
+                        .sample_iter(&Alphanumeric)
+                        .take(20) // Specify the length of the random string
+                        .map(char::from)
+                        .collect();
+                    
+                        let file_name = format!("{}.svg", random_filename);
+                    
+                        thread::sleep(Duration::new(4, 0));
+                        let mut file = File::create(&file_name)?;
+                        file.write_all(qr_code.as_bytes())?;
+                        drop(file);
+
+                        open::that(&file_name)?;
+                        // Delet the file
+                        thread::sleep(Duration::new(1, 0));
+                        let path: PathBuf = PathBuf::from(file_name);
+                        file_deletion(path)?;
                 }
 
         }
