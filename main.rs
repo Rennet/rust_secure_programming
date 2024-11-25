@@ -23,13 +23,11 @@ use rand::distributions::Alphanumeric;
 use base32::encode;
 use base32::Alphabet::Rfc4648;
 use dialoguer::{theme::ColorfulTheme, Select};
-
 use wincredentials::*;
-
 mod encryption;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    
+
     // Define DB
     let username_db = "secureprogramming-user-test2";
     let salt = b"858dc1dfe1f";
@@ -148,6 +146,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let commands = vec![
             "Generate Key",
             "Help",
+            "Store",
+            "Retrieve",
             "Encrypt File",
             "Decrypt File",
             "Delete File",
@@ -176,6 +176,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     help_menu();
                 }
                 "Encrypt File" => {
+                        println!("Do you want to automatically generate the key? If you have your own key, press n (y/n):");
+                        let mut key_choice = String::new();
+                        io::stdin()
+                            .read_line(&mut key_choice)
+                            .expect("Failed to read input");
+
                         println!("Do you want to list files in the current directory? (y/n):");
                         let mut list_files_choice = String::new();
                         io::stdin()
@@ -185,15 +191,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if list_files_choice.trim().eq_ignore_ascii_case("y") {
                             list_files_in_directory(&current_dir);
                         }
-
-                        println!("Do you want to automatically generate the key? If you have your own key, press n (y/n):");
-                        let mut list_files_choice = String::new();
-                        io::stdin()
-                            .read_line(&mut list_files_choice)
-                            .expect("Failed to read input");
-
                         
-                        println!("Start typing the file name, relative path or full path. (auto-completion supported. NB! Auto-completion prioritizes alphabetically and works only on current directory.):");
+                        println!("Type the file name, relative path or full path. (auto-completion supported. NB! Auto-completion prioritizes alphabetically and works only on current directory.):");
                         let file_name = get_file_with_completion(&current_dir);
 
                         let mut file_path = PathBuf::from(&current_dir);
@@ -201,7 +200,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         
                         let key: GenericArray<u8, U32>;
 
-                        if list_files_choice.trim().eq_ignore_ascii_case("y") {
+                        if key_choice.trim().eq_ignore_ascii_case("y") {
                             key = generate_random_aes_key();
                         } else {
                             let mut byte_array = [0u8; 32];
