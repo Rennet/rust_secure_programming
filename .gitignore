@@ -1,1 +1,4 @@
 /target
+*.encrypted.rt
+/fuzz
+/test_files

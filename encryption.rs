@@ -194,7 +194,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         for _ in 0..10 {
             file.seek(SeekFrom::Start(0))?;
-            let random_data: Vec<u8> = (0..file_size).map(|_| rng.gen()).collect();
+            let random_data: Vec<u8> = (0..file_size).map(|_| rng.gen::<u8>()).collect();
             file.write_all(&random_data)?;
             file.flush()?;  // Ensure data is written to disk
         }
