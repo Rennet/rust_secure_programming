@@ -11,8 +11,13 @@ use typenum::U32;
 
 pub fn file_encryption(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Result<()> {
 
+    //Check if file exists, if not put back to the menu
+    if !file_path.exists() {
+        println!("Error: File does not exist. Returning to the menu...");
+        return Ok(()); // Exit gracefully
+    }
+
     // file name
-    //println!("{}",&file_path.display());
     let file_name = &file_path.file_stem().unwrap();
     //println!("{:?}",&file_name);
 
@@ -44,14 +49,17 @@ pub fn file_encryption(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Re
     let ciphertext: Vec<u8> = blocks.iter()
     .flat_map(|block| block.as_slice())
     .cloned().collect();
+    println!("Encrypting file: {:?}", &file_path);
     
-    println!("{}",new_file_name);
-    
+
     // create output file
     let mut file = File::create(&new_file_name)?;
     file.write_all(&ciphertext)?;
     drop(file_path);
     drop(file);
+
+    println!("AES Key: {:?}", hex::encode(&key).trim());
+    println!("Encrypted File name: {}", &new_file_name);
     Ok(())
 }
 
