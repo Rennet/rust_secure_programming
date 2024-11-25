@@ -6,8 +6,10 @@ use typenum::U32;
 use hex;
 use hex::FromHex;
 use std::fs::{OpenOptions, remove_file};
+use std::fs;
 use std::io::{Seek, SeekFrom};
 use std::fs::File;
+use std::path::Path;
 use std::thread;
 use std::time::Duration;
 use std::process;
@@ -20,6 +22,7 @@ use open;
 use rand::distributions::Alphanumeric;
 use base32::encode;
 use base32::Alphabet::Rfc4648;
+use dialoguer::{theme::ColorfulTheme, Select};
 
 use wincredentials::*;
 
@@ -28,7 +31,7 @@ mod encryption;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // Define DB
-    let username_db = "secureprogramming-user-test7";
+    let username_db = "secureprogramming-user-test2";
     let salt = b"858dc1dfe1f";
     let config = Config::default();
 
@@ -65,16 +68,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             println!("Authentication successful")
                         } else {
                             println!("Authentication failed.");
-                        process::exit(0); 
+                            quit(); 
                         }
                         // Successful authentication
                     } else {
                         println!("Authentication failed.");
-                        process::exit(0); 
+                        quit();
                     }
                 } else {
                     println!("Authentication failed.");
-                    process::exit(0);
+                    quit();
                 }
         }
         Err(error) => { // No credentials exist
@@ -139,52 +142,105 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         }
     }
-    let args: Vec<String> = env::args().collect();
+    
     let current_dir = env::current_dir().expect("Failed to get current directory");
-      
-      
-      if args.len() == 1 {
-          let mut while_flag = true;
-          
-        while while_flag {
-              println!("Enter 'q' to quit or write 'help' to see other commands:");
-              
-              let mut input = String::new();
-              io::stdin()
-              .read_line(&mut input)
-              .expect("Failed to read input");
-            
-        let command = input.trim();
-            
-            if command == "q" {
-                while_flag = false;
-                    
-            } else if command == "gen_key" {
+
+    let commands = vec![
+        "Generate Key",
+        "Help",
+        "Encrypt File",
+        "Decrypt File",
+        "Delete File",
+        "Encrypt Text",
+        "Decrypt Text",
+        "Change Password",
+        "Change MFA",
+        "Quit",
+    ]; 
+
+    loop {
+        // Display the menu and let the user select a command
+        let selection = Select::with_theme(&ColorfulTheme::default())
+            .with_prompt("Choose a command")
+            .items(&commands)
+            .default(0) // Preselect the first item
+            .interact()
+            .expect("Failed to display menu");
+
+        match commands[selection] {
+            "Generate Key" => {
                 let generated_key = generate_random_aes_key();
-                println!("{:?}", hex::encode(generated_key));  
-            } else if command == "set_db_key" {
-                println!("Please enter valid AES key that you want to encrypt database with");
-                let mut db_key = String::new();
-                io::stdin()
-                .read_line(&mut db_key)
-                .expect("Failed to read input");
-            println!("{:?}", db_key.as_bytes().to_vec());
-            
-            } else if command == "help" {
+                println!("Generated Key: {:?}", hex::encode(generated_key));
+            }
+            "Help" => {
                 help_menu();
-            } else if command == "delete-file" {
-                println!("Enter file you want to delete:");
-                let mut file_name = String::new();
+            }
+            "Encrypt File" => {
+                    println!("Do you want to list files in the current directory? (y/n):");
+                    let mut list_files_choice = String::new();
+                    io::stdin()
+                        .read_line(&mut list_files_choice)
+                        .expect("Failed to read input");
+
+                    if list_files_choice.trim().eq_ignore_ascii_case("y") {
+                        list_files_in_directory(&current_dir);
+                    }
+
+                    println!("Do you want to automatically generate the key? If you have your own key, press n (y/n):");
+                    let mut list_files_choice = String::new();
+                    io::stdin()
+                        .read_line(&mut list_files_choice)
+                        .expect("Failed to read input");
+
+                    
+                    println!("Start typing the file name, relative path or full path. (auto-completion supported. NB! Auto-completion prioritizes alphabetically and works only on current directory.):");
+                    let file_name = get_file_with_completion(&current_dir);
+
+                    let mut file_path = PathBuf::from(&current_dir);
+                    file_path.push(&file_name.trim());
+                    
+                    let key: GenericArray<u8, U32>;
+
+                    if list_files_choice.trim().eq_ignore_ascii_case("y") {
+                        key = generate_random_aes_key();
+                    } else {
+                        let mut byte_array = [0u8; 32];
+                        
+                        println!("Enter the key for the file you want to encrypt:");
+                        let mut entered_key = String::new();
+                        io::stdin()
+                        .read_line(&mut entered_key)
+                        .expect("Failed to read input");
+                        let input_bytes = validate_aes_key(&entered_key.trim());
+            
+                        // Step 2: Copy the first 32 bytes (or pad with 0s if shorter)
+                        match input_bytes {
+                            Some(valid_key) => {
+                                // Copy the validated key into `byte_array`
+                                byte_array.copy_from_slice(&valid_key);
+                                println!("AES Key: {:?}", byte_array);
+                            }
+                            None => {
+                                // if invalid input, promt again.
+                            }
+                        }
+                        key = GenericArray::from(byte_array);
+                    }
+        
+                    println!("AES Key: {:?}", hex::encode(&key).trim());
+                    encryption::file_encryption(file_path, key)?;
+            }
+            "Decrypt File" => {
+                println!("Do you want to list files in the current directory? (y/n):");
+                let mut list_files_choice = String::new();
                 io::stdin()
-                .read_line(&mut file_name)
-                .expect("Failed to read input");
-            
-            let mut file_path = PathBuf::from(&current_dir);
-            file_path.push(&file_name.trim());
-            
-            file_deletion(file_path)?;
-            } else if command == "decrypt-file" {
-                println!("Enter file you want to decrypt:");
+                    .read_line(&mut list_files_choice)
+                    .expect("Failed to read input");
+                if list_files_choice.trim().eq_ignore_ascii_case("y") {
+                    list_files_in_directory(&current_dir);
+                }
+
+                println!("Enter file you want to decrypt or enter its relative path.:");
                 let mut file_name = String::new();
                 io::stdin()
                 .read_line(&mut file_name)
@@ -205,73 +261,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Step 2: Copy the first 32 bytes (or pad with 0s if shorter)
                 match input_bytes {
-                Some(valid_key) => {
-                    // Copy the validated key into `byte_array`
-                    byte_array.copy_from_slice(&valid_key);
-                    println!("AES Key: {:?}", byte_array);
+                    Some(valid_key) => {
+                        // Copy the validated key into `byte_array`
+                        byte_array.copy_from_slice(&valid_key);
+                        println!("AES Key: {:?}", byte_array);
+                    }
+                    None => {
+                        // if invalid input, promt again.
+                    }
                 }
-                None => {
-                    // if invalid input, promt again.
-                }
-            }
                 let key: GenericArray<u8, U32> = GenericArray::from(byte_array);
 
                 println!("{:?}", hex::encode(&key));
                 encryption::file_decryption(file_path, key)?;
+            }
+            "Delete File" => {
+
+                println!("Do you want to list files in the current directory? (y/n):");
+                let mut list_files_choice = String::new();
+                io::stdin()
+                .read_line(&mut list_files_choice)
+                .expect("Failed to read input");
+
+                if list_files_choice.trim().eq_ignore_ascii_case("y") {
+                    list_files_in_directory(&current_dir);
+                }
+
+                println!("Enter file you want to delete:");
+                let mut file_name = String::new();
+                io::stdin()
+                .read_line(&mut file_name)
+                .expect("Failed to read input");
             
-                
-
-            } else if command == "encrypt-file-rng-key" {
                 let mut file_path = PathBuf::from(&current_dir);
-                let key = generate_random_aes_key();
+                file_path.push(&file_name.trim());
                 
-                        println!("Enter file you want to encrypt:");
-                        let mut file_name = String::new();
-                        io::stdin()
-                        .read_line(&mut file_name)
-                        .expect("Failed to read input");
-                        
-                        file_path.push(&file_name.trim());
-                        //println!("file path: {}", &file_path.display());
-                        println!("{:?}", hex::encode(&key));
-                        encryption::file_encryption(file_path, key)?;
-            } else if command == "encrypt-file" {    
-                    println!("Enter file you want to encrypt:");
-                    let mut file_name = String::new();
-                    io::stdin()
-                    .read_line(&mut file_name)
-                    .expect("Failed to read input");
-                
-                    let mut file_path = PathBuf::from(&current_dir);
-                    file_path.push(&file_name.trim());
-                    
-                    let mut byte_array = [0u8; 32];
-
-                    println!("Enter the key for the file you want to encrypt:");
-                    let mut entered_key = String::new();
-                    io::stdin()
-                    .read_line(&mut entered_key)
-                    .expect("Failed to read input");
-
-                    let input_bytes = validate_aes_key(&entered_key.trim());
-        
-                    // Step 2: Copy the first 32 bytes (or pad with 0s if shorter)
-                    match input_bytes {
-                        Some(valid_key) => {
-                            // Copy the validated key into `byte_array`
-                            byte_array.copy_from_slice(&valid_key);
-                            println!("AES Key: {:?}", byte_array);
-                        }
-                        None => {
-                            // if invalid input, promt again.
-                        }
-                    }
-        
-                    let key: GenericArray<u8, U32> = GenericArray::from(byte_array);
-                    
-                    println!("{:?}", hex::encode(&key));
-                    encryption::file_encryption(file_path, key)?;
-            } else if command == "encrypt" {
+                file_deletion(file_path)?;
+            }
+            "Encrypt Text" => {
                 println!("Enter phrase you want to encrypt:");
                 let mut plaintext = String::new();
                 io::stdin()
@@ -303,10 +330,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     //println!("{:?}", hex::encode(&key));
 
                 println!("{}",encryption::text_encryption(plaintext, key));
-
-
-            } else if command == "decrypt" {
-                    println!("Enter ciphertext you want to decrypt:");
+            }
+            "Decrypt Text" => {
+                println!("Enter ciphertext you want to decrypt:");
                     let mut ciphertext = String::new();
                     io::stdin()
                     .read_line(&mut ciphertext)
@@ -337,13 +363,69 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         //println!("{:?}", hex::encode(&key));
 
                     println!("{}",encryption::text_decryption(ciphertext, key));
+            }
+            "Change Password" => {
+                println!("Change Password functionality here.");
+            }
+            "Change MFA" => {
+                println!("Change MFA functionality here.");
+            }
+            "Quit" => {
+                println!("Exiting program...");
+                //quit();
+                break;
+            }
+            _ => {
+                println!("Unknown command.");
+            }
+        }
+    } 
+    /*
+    if args.len() == 1 {
+        let mut while_flag = true;
+        
+        while while_flag {
+            println!("Enter 'q' to quit or write 'help' to see other commands:");
+            
+            let mut input = String::new();
+            io::stdin()
+            .read_line(&mut input)
+            .expect("Failed to read input");
+        
+        let command = input.trim();
+        
+        if command == "encrypt-file-rng-key" {
+            println!("Do you want to list files in the current directory? (y/n):");
+            let mut list_files_choice = String::new();
+            io::stdin()
+            .read_line(&mut list_files_choice)
+            .expect("Failed to read input");
+        if list_files_choice.trim().eq_ignore_ascii_case("y") {
+            list_files_in_directory(&current_dir);
+                        }
+                        
+                        let mut file_path = PathBuf::from(&current_dir);
+                        let key = generate_random_aes_key();
+                        
+                        println!("Enter file you want to encrypt:");
+                        let mut file_name = String::new();
+                        io::stdin()
+                        .read_line(&mut file_name)
+                        .expect("Failed to read input");
+                    
+                    file_path.push(&file_name.trim());
+                    //println!("file path: {}", &file_path.display());
+                    println!("{:?}", hex::encode(&key));
+                    encryption::file_encryption(file_path, key)?;
+                    
                 }
             }
         }
+    */   
         Ok(())
     } 
-
-
+    
+    
 fn file_deletion(file_path: PathBuf) -> io::Result<()> {
     // Step 1: Open file in write mode
     let mut file = OpenOptions::new().write(true).open(file_path.clone())?;
@@ -355,7 +437,7 @@ fn file_deletion(file_path: PathBuf) -> io::Result<()> {
     let mut rng = rand::thread_rng();
     for _ in 0..10 {
         file.seek(SeekFrom::Start(0))?;
-        let random_data: Vec<u8> = (0..file_size).map(|_| rng.gen()).collect();
+        let random_data: Vec<u8> = (0..file_size).map(|_| rng.gen::<u8>()).collect();
         file.write_all(&random_data)?;
         file.flush()?;  // Ensure data is written to disk
     }
@@ -393,7 +475,7 @@ fn generate_random_aes_key() -> GenericArray<u8, U32> {
 
 fn help_menu() {
 
-    println!("To use this software, please authenticate.
+    println!("
     Usable commands:
     q                           - Quit the program.
     gen_key                     - Generate a 64 bit AES key.
@@ -408,6 +490,63 @@ fn help_menu() {
     register                    - Simple registration. Prompts username to be registered and password.
     ");
     
+}
+
+fn list_files_in_directory(dir: &Path) {
+    match fs::read_dir(dir) {
+        Ok(entries) => {
+            println!("Files in {:?}:", dir);
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    if let Ok(metadata) = entry.metadata() {
+                        if metadata.is_file() {
+                            println!("{}", entry.file_name().to_string_lossy());
+                        }
+                    }
+                }
+            }
+        }
+        Err(err) => {
+            eprintln!("Error reading directory: {}", err);
+        }
+    }
+}
+
+fn quit() {
+    process::exit(0);
+}
+
+fn get_file_with_completion(dir: &Path) -> String {
+    let mut file_name = String::new();
+    let completions: Vec<String> = match fs::read_dir(dir) {
+        Ok(entries) => entries
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.metadata().map(|m| m.is_file()).unwrap_or(false))
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+
+    println!("Available files: {:?}", completions);
+    print!("File name: ");
+    io::stdout().flush().unwrap();
+
+    io::stdin()
+        .read_line(&mut file_name)
+        .expect("Failed to read input");
+    let mut file_name = file_name.trim().to_string();
+
+    // Auto-completion logic
+    if !completions.is_empty() {
+        if let Some(completion) = completions.iter().find(|f| f.starts_with(&file_name)) {
+            println!("Auto-completed to: {}", completion);
+            file_name = completion.clone();
+        } else {
+            println!("No matches found for '{}'.", file_name);
+        }
+    }
+
+    file_name
 }
 
 

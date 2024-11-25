@@ -63,11 +63,11 @@ pub fn file_decryption(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Re
     
     // Remove the ".encrypted.rt" from the stem if it exists
     let new_file_stem = file_stem_str.trim_end_matches(".encrypted");
-    println!("new_file_stem: {}",new_file_stem);
+    //println!("new_file_stem: {}",new_file_stem);
 
     // Create the new file name with ".decrypted.txt" extension
     let new_file_name = format!("{}", new_file_stem,);
-    println!("new_file_name: {}",new_file_name);
+    //println!("new_file_name: {}",new_file_name);
     
     // Read the encrypted file
     let encrypted_data = fs::read(&file_path)?;
