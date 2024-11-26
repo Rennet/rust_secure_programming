@@ -27,12 +27,12 @@ pub fn file_encryption(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Re
     let contents = fs::read(file_path.clone()).expect("Should have been able to read the file");
     //println!("{:?}",&contents);
     let mut plaintext = contents.clone();
-    
+
     // Padding
     let padding_length = 16 - (plaintext.len() % 16);
     plaintext.extend(vec![padding_length as u8; padding_length]);
-    
-    
+
+
     // cipher
     let cipher = Aes256::new(&key);
     let mut blocks: Vec<GenericArray<u8, aes::cipher::consts::U16>> = plaintext
@@ -49,7 +49,7 @@ pub fn file_encryption(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Re
     let ciphertext: Vec<u8> = blocks.iter()
     .flat_map(|block| block.as_slice())
     .cloned().collect();
-    println!("Encrypting file: {:?}", &file_path);
+    println!("Storing file: {:?}", &file_path);
     
 
     // create output file
@@ -59,7 +59,7 @@ pub fn file_encryption(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Re
     drop(file);
 
     println!("AES Key: {:?}", hex::encode(&key).trim());
-    println!("Encrypted File name: {}", &new_file_name);
+    println!("Stored File name: {}", &new_file_name);
     Ok(())
 }
 
@@ -176,6 +176,124 @@ pub fn text_decryption(ciphertext: String, key: GenericArray<u8, U32>) -> String
     String::from_utf8(decrypted_data).expect("Decrypted data is not valid UTF-8").trim().to_string()
 }
 
+pub fn file_store(file_path: PathBuf, key: GenericArray<u8, U32>, destination: &str) -> io::Result<()> {
+    // Check if file exists, if not return to the menu
+    const ALLOWED_ROOT: &str = "C:\\Secureprogramming";
+
+    // Check if the file exists
+    if !file_path.exists() {
+        println!("Error: File does not exist. Returning to the menu...");
+        return Ok(()); // Exit gracefully
+    }
+
+    // Resolve the canonical path of the destination
+    let destination_path = fs::canonicalize(destination).map_err(|_| {
+        io::Error::new(io::ErrorKind::InvalidInput, "Invalid destination path")
+    })?;
+
+    // Check if the destination starts with the allowed root directory
+    let allowed_root = fs::canonicalize(ALLOWED_ROOT).expect("Allowed root directory should exist");
+    if !destination_path.starts_with(&allowed_root) {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "Files can only be stored in C:\\Secureprogramming\\",
+        ));
+    }
+
+    // Extract the file name
+    let file_name = file_path.file_name().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "Invalid file path")
+    })?;
+
+    // Combine destination and file name
+    let new_file_name = format!("{}\\{}", destination.trim_end_matches('\\'), file_name.to_string_lossy());
+    println!("Encrypting file: {:?}", file_path);
+    // println!("Destination file: {}", new_file_name);
+
+    // Read the file contents
+    let mut plaintext = fs::read(&file_path)?;
+
+    // Padding
+    let padding_length = 16 - (plaintext.len() % 16);
+    plaintext.extend(vec![padding_length as u8; padding_length]);
+
+    // Cipher setup
+    let cipher = Aes256::new(&key);
+    let mut blocks: Vec<GenericArray<u8, aes::cipher::consts::U16>> = plaintext
+        .chunks_exact(16)
+        .map(|chunk| GenericArray::clone_from_slice(chunk))
+        .collect();
+
+    // Encrypt blocks
+    for block in &mut blocks {
+        cipher.encrypt_block(block);
+    }
+
+    // Convert encrypted blocks to byte array
+    let ciphertext: Vec<u8> = blocks.iter()
+        .flat_map(|block| block.as_slice())
+        .cloned()
+        .collect();
+
+    // Write encrypted contents to the new file
+    let mut file = File::create(&new_file_name)?;
+    file.write_all(&ciphertext)?;
+
+    println!("AES Key: {:?}", hex::encode(&key).trim());
+    // println!("Encrypted File name: {}", new_file_name);
+    Ok(())
+}
+
+pub fn file_retrieve(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Result<()> {
+    //Check if file exists, if not put back to the menu
+    if !file_path.exists() {
+        println!("Error: File does not exist. Returning to the menu...");
+        return Ok(()); // Exit gracefully
+    }
+
+    // File name for decrypted output
+    let file_stem = file_path.file_stem().unwrap();
+    let file_stem_str = file_stem.to_str().unwrap();
+    println!("file_stem_str: {}",file_stem_str);
+
+    // Remove the ".encrypted.rt" from the stem if it exists
+    let new_file_name = file_stem_str.trim_end_matches(".encrypted.rt");
+
+    // Read the encrypted file
+    let encrypted_data = fs::read(&file_path)?;
+
+    // Cipher initialization
+    let cipher = Aes256::new(&key);
+
+    // Decrypting
+    let mut blocks: Vec<GenericArray<u8, aes::cipher::consts::U16>> = encrypted_data
+        .chunks_exact(16)
+        .map(GenericArray::clone_from_slice)
+        .collect();
+
+    // Decrypt each block
+    for block in &mut blocks {
+        cipher.decrypt_block(block);
+    }
+
+    // Convert decrypted blocks back to a byte array
+    let mut decrypted_data: Vec<u8> = blocks.iter()
+        .flat_map(|block| block.as_slice())
+        .cloned()
+        .collect();
+
+    // Remove padding
+    let padding_length = *decrypted_data.last().unwrap();
+    decrypted_data.truncate(decrypted_data.len() - padding_length as usize);
+
+    // Create output file
+    let mut file = File::create(&new_file_name)?;
+    file.write_all(&decrypted_data)?;
+    drop(file_path);
+    drop(file);
+
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests {
@@ -190,14 +308,14 @@ mod tests {
     use rand::Rng;
     use std::io::Seek;
 
-    
+
     fn file_deletion(file_path: PathBuf) -> io::Result<()> {
         // Step 1: Open file in write mode
         let mut file = OpenOptions::new().write(true).open(file_path.clone())?;
-        
+
         // Step 2: Get the file size
         let file_size = file.metadata()?.len();
-    
+
         // Step 3: Overwrite file multiple times with random data
         let mut rng = rand::thread_rng();
         for _ in 0..10 {
@@ -206,11 +324,11 @@ mod tests {
             file.write_all(&random_data)?;
             file.flush()?;  // Ensure data is written to disk
         }
-    
+
         // Step 4: Delete the file
         drop(file);  // Close file handle
         remove_file(file_path)?;
-    
+
         Ok(())
     }
 
@@ -226,7 +344,6 @@ mod tests {
 
         // Encrypt the file
         file_encryption(test_file_path.clone(), key.clone())?;
-        println!("1");
 
         // Ensure encrypted file exists
         let encrypted_file_path = PathBuf::from("test_file.encrypted.rt");
@@ -236,11 +353,9 @@ mod tests {
             encrypted_file_path.display()
         );
 
-        println!("2");
         // Decrypt the file
         file_decryption(encrypted_file_path.clone(), key.clone())?;
 
-        println!("3");
         // Ensure decrypted file exists and matches original content
         let decrypted_file_path = PathBuf::from("test_file.txt");
         assert!(
@@ -248,13 +363,12 @@ mod tests {
             "Decrypted file not found: {}",
             decrypted_file_path.display()
         );
-        println!("4");
+
         let decrypted_data = fs::read(&decrypted_file_path)?;
         assert_eq!(
             decrypted_data, test_data,
             "Decrypted data does not match original content"
         );
-        println!("5");
 
         // Cleanup
         fs::remove_file(encrypted_file_path)?;
