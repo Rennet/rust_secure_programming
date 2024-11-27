@@ -87,8 +87,7 @@ pub fn file_decryption(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Re
     let new_file_stem = file_stem_str.trim_end_matches(".encrypted");
 
     // Create the new file name with ".decrypted.txt" extension
-    let new_file_name = format!("{}", new_file_stem,);
-    //println!("new_file_name: {}",new_file_name);
+    let new_file_name = format!("{}.decrypted.txt", new_file_stem);
 
     // Read the encrypted file
     let encrypted_data = fs::read(&file_path)?;
@@ -109,7 +108,7 @@ pub fn file_decryption(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Re
     let cipher = Aes256::new(&key);
 
     // Decrypting
-    let mut blocks: Vec<GenericArray<u8, aes::cipher::consts::U16>> = encrypted_data
+    let mut blocks: Vec<GenericArray<u8, aes::cipher::consts::U16>> = ciphertext
         .chunks_exact(16)
         .map(GenericArray::clone_from_slice)
         .collect();
@@ -127,8 +126,8 @@ pub fn file_decryption(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Re
 
     // Remove padding
     let padding_length = *decrypted_data.last().unwrap();
-    if  usize::from(padding_length) > decrypted_data.len() {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "Invalid padding length"));
+    if padding_length == 0 || padding_length as usize > decrypted_data.len() {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid padding length"));
     }
     decrypted_data.truncate(decrypted_data.len() - padding_length as usize);
 
@@ -138,7 +137,7 @@ pub fn file_decryption(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Re
 
     println!("Decryption successful.");
     println!("Decrypted file name: {}", new_file_name);
-    
+
     drop(file_path);
     drop(file);
 

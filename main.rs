@@ -559,7 +559,7 @@ fn file_deletion(file_path: PathBuf) -> io::Result<()> {
     let log_message = format!("{} Deleted.", file_path.display());
     log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
     remove_file(file_path)?;
-
+    thread::sleep(Duration::new(1, 0));
     Ok(())
 }
 
@@ -717,6 +717,7 @@ mod tests {
         let mut file = File::create(&path)?; // File is scoped to ensure it gets dropped
         file.write_all(content)?;
         } // File is dropped here
+        thread::sleep(Duration::new(1, 0));
         Ok(path)
     }
 
