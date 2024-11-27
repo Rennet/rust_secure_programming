@@ -8,6 +8,10 @@ use std::path::PathBuf;
 use std::fs::File;
 use std::io::{self, Write};
 use typenum::U32;
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
+
+type HmacSha256 = Hmac<Sha256>;
 
 pub fn file_encryption(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Result<()> {
 
@@ -18,11 +22,10 @@ pub fn file_encryption(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Re
     }
 
     // file name
-    let file_name = &file_path.file_stem().unwrap();
-    //println!("{:?}",&file_name);
-
-    let new_file_name = format!("{}{}", file_name.to_str().unwrap(), ".encrypted.rt");
-    //println!("{}",&new_file_name);
+    let file_name = file_path
+        .file_stem()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Invalid file path"))?;
+    let new_file_name = format!("{}{}", file_name.to_string_lossy(), ".encrypted.rt");
 
     let contents = fs::read(file_path.clone()).expect("Should have been able to read the file");
     //println!("{:?}",&contents);
@@ -39,50 +42,72 @@ pub fn file_encryption(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Re
     .chunks_exact(16)
     .map(|chunk| GenericArray::clone_from_slice(chunk))
     .collect();
-    
+
     // encrypting
     for block in &mut blocks {
         cipher.encrypt_block(block);
     }
-    
+
     // Convert encrypted blocks back to a byte array
     let ciphertext: Vec<u8> = blocks.iter()
     .flat_map(|block| block.as_slice())
     .cloned().collect();
     println!("Storing file: {:?}", &file_path);
-    
+
+    // Generate HMAC
+    let mut hmac = <HmacSha256 as Mac>::new_from_slice(&key)
+        .expect("HMAC can take key of any size");
+    hmac.update(&ciphertext); // Add ciphertext to HMAC computation
+    let hmac_result = hmac.finalize().into_bytes(); // Get HMAC as bytes
+
+    // Combine ciphertext and HMAC
+    let mut output_data = ciphertext;
+    output_data.extend(hmac_result);
 
     // create output file
     let mut file = File::create(&new_file_name)?;
-    file.write_all(&ciphertext)?;
+    file.write_all(&output_data)?;
     drop(file_path);
     drop(file);
 
     println!("AES Key: {:?}", hex::encode(&key).trim());
+    println!("HMAC: {:?}", hex::encode(hmac_result).trim());
     println!("Stored File name: {}", &new_file_name);
     Ok(())
 }
 
 pub fn file_decryption(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Result<()> {
     // File name for decrypted output
-    let file_stem = file_path.file_stem().unwrap();
-    let file_stem_str = file_stem.to_str().unwrap();
-    println!("file_stem_str: {}",file_stem_str);
-    
+    let file_stem = file_path
+        .file_stem()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Invalid file path"))?;
+    let file_stem_str = file_stem.to_string_lossy();
+
     // Remove the ".encrypted.rt" from the stem if it exists
     let new_file_stem = file_stem_str.trim_end_matches(".encrypted");
-    //println!("new_file_stem: {}",new_file_stem);
 
     // Create the new file name with ".decrypted.txt" extension
     let new_file_name = format!("{}", new_file_stem,);
     //println!("new_file_name: {}",new_file_name);
-    
+
     // Read the encrypted file
     let encrypted_data = fs::read(&file_path)?;
-    
+
+    if encrypted_data.len() < 32 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "File too small to contain valid HMAC"));
+    }
+    let (ciphertext, received_hmac) = encrypted_data.split_at(encrypted_data.len() - 32);
+
+    let mut hmac = <HmacSha256 as Mac>::new_from_slice(&key)
+        .expect("HMAC can take key of any size");
+    hmac.update(ciphertext);
+
+    hmac.verify_slice(received_hmac)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "HMAC verification failed"))?;
+
     // Cipher initialization
     let cipher = Aes256::new(&key);
-    
+
     // Decrypting
     let mut blocks: Vec<GenericArray<u8, aes::cipher::consts::U16>> = encrypted_data
         .chunks_exact(16)
@@ -99,14 +124,21 @@ pub fn file_decryption(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Re
         .flat_map(|block| block.as_slice())
         .cloned()
         .collect();
-    
+
     // Remove padding
     let padding_length = *decrypted_data.last().unwrap();
+    if  usize::from(padding_length) > decrypted_data.len() {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "Invalid padding length"));
+    }
     decrypted_data.truncate(decrypted_data.len() - padding_length as usize);
 
     // Create output file
     let mut file = File::create(&new_file_name)?;
     file.write_all(&decrypted_data)?;
+
+    println!("Decryption successful.");
+    println!("Decrypted file name: {}", new_file_name);
+    
     drop(file_path);
     drop(file);
 
@@ -117,7 +149,7 @@ pub fn text_encryption(plaintext: String, key: GenericArray<u8, U32>) -> String 
 
     let contents = plaintext.into_bytes();
     let mut plaintext = contents.clone();
-    
+
     // Padding
     let padding_length = 16 - (plaintext.len() % 16);
     plaintext.extend(vec![padding_length as u8; padding_length]);
@@ -142,6 +174,7 @@ pub fn text_encryption(plaintext: String, key: GenericArray<u8, U32>) -> String 
 
     // string output
     hex::encode(ciphertext).to_string()
+
 }
 
 pub fn text_decryption(ciphertext: String, key: GenericArray<u8, U32>) -> String {
@@ -446,4 +479,97 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+fn test_decryption_with_wrong_key() -> io::Result<()> {
+    let key = GenericArray::from_slice(&[0u8; 32]);
+    let wrong_key = GenericArray::from_slice(&[1u8; 32]);
+
+    let test_file_path = PathBuf::from("wrong_key_test.txt");
+    fs::write(&test_file_path, b"Test content")?;
+
+    file_encryption(test_file_path.clone(), key.clone())?;
+
+    let encrypted_file_path = PathBuf::from("wrong_key_test.encrypted.rt");
+    assert!(
+        encrypted_file_path.exists(),
+        "Encrypted file not found"
+    );
+
+    let result = file_decryption(encrypted_file_path.clone(), wrong_key.clone());
+    assert!(
+        result.is_err(),
+        "Decryption with wrong key should fail"
+    );
+
+    fs::remove_file(encrypted_file_path)?;
+    fs::remove_file(test_file_path)?;
+    Ok(())
+}
+
+#[test]
+fn test_tampered_data_detection() -> io::Result<()> {
+    let key = GenericArray::from_slice(&[0u8; 32]);
+
+    let test_file_path = PathBuf::from("tampered_test.txt");
+    fs::write(&test_file_path, b"Original content")?;
+
+    file_encryption(test_file_path.clone(), key.clone())?;
+
+    let encrypted_file_path = PathBuf::from("tampered_test.encrypted.rt");
+    assert!(
+        encrypted_file_path.exists(),
+        "Encrypted file not found"
+    );
+
+    let mut tampered_data = fs::read(&encrypted_file_path)?;
+    tampered_data[0] ^= 0xFF; // Modify a byte to simulate tampering
+    fs::write(&encrypted_file_path, tampered_data)?;
+
+    let result = file_decryption(encrypted_file_path.clone(), key.clone());
+    assert!(
+        result.is_err(),
+        "Decryption of tampered data should fail"
+    );
+
+    fs::remove_file(encrypted_file_path)?;
+    fs::remove_file(test_file_path)?;
+    Ok(())
+}
+
+#[test]
+fn test_store_file_outside_allowed_path() -> io::Result<()> {
+    let key = GenericArray::from_slice(&[0u8; 32]);
+
+    let test_file_path = PathBuf::from("test_file_outside.txt");
+    fs::write(&test_file_path, b"Content")?;
+
+    let result = file_store(test_file_path.clone(), key.clone(), "C:\\UnauthorizedPath\\");
+    assert!(
+        result.is_err(),
+        "Storing file outside allowed root should fail"
+    );
+
+    fs::remove_file(test_file_path)?;
+    Ok(())
+}
+
+#[test]
+fn test_invalid_padding_handling() -> io::Result<()> {
+    let key = GenericArray::from_slice(&[0u8; 32]);
+
+    let mut invalid_data = vec![0u8; 48]; // Incorrect padding
+    invalid_data[47] = 50; // Invalid padding value
+    let test_file_path = PathBuf::from("invalid_padding_test.encrypted.rt");
+    fs::write(&test_file_path, &invalid_data)?;
+
+    let result = file_decryption(test_file_path.clone(), key.clone());
+    assert!(
+        result.is_err(),
+        "Decryption of data with invalid padding should fail"
+    );
+
+    fs::remove_file(test_file_path)?;
+    Ok(())
+}
 }
