@@ -1,4 +1,5 @@
 use aes::cipher::{generic_array::GenericArray};
+use wincredentials::credential::Credential;
 use encryption::{file_retrieve, file_store};
 use std::env;
 use std::path::PathBuf;
@@ -28,13 +29,30 @@ use dialoguer::{theme::ColorfulTheme, Select};
 use wincredentials::*;
 mod encryption;
 use winapi::um::winbase::{RegisterEventSourceW, ReportEventW, DeregisterEventSource};
+use widestring::{U16CString};
+use wincredentials_bindings::Windows::Win32::{
+    Foundation::*, Security::Credentials::*, System::SystemInformation::*,
+};
 use winapi::um::winnt::EVENTLOG_ERROR_TYPE;
 use winapi::um::winnt::EVENTLOG_INFORMATION_TYPE;
-use widestring::U16CString;
 use std::panic;
 use std::fs::create_dir_all;
+use ring::pbkdf2;
+use ring::rand::{SecureRandom, SystemRandom};
+use std::num::NonZeroU32;
+use lazy_static;
 
+const NO_FLAGS: u32 = 0;
+const GENERIC_CREDENTIAL: u32 = 1;
 const STORAGE_FILES_DIR: &str = "C:\\secureprogramming\\";
+const SALT_DB : &str = "secureprogramming-user32";
+const USERNAME_DB : &str = "secureprogramming-user23";
+const SALT_LENGTH: usize = 16;
+const DERIVED_KEY_LENGTH: usize = 32;
+
+lazy_static::lazy_static! {
+    static ref PBKDF2_ITERATIONS: NonZeroU32 = NonZeroU32::new(100_000).expect("Invalid iterations");
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
 
@@ -53,16 +71,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         create_dir_all(STORAGE_FILES_DIR)?;
 
         // Define DB
-        let username_db = "secureprogramming-user-test2";
-        let salt = b"858dc1dfe1f";
         let config = Config::default();
 
-        let secret = SecretBox::new(Box::new("YU38IWO1K3B9W0DIWBID3LDEVFXZGG54".to_string()));
-        let base32_secret = SecretBox::new(Box::new(encode(Rfc4648 { padding: true }, secret.expose_secret().as_bytes())));
         let auth = GoogleAuthenticator::new();
 
         // Check if database exists, if not, then prompt to registration.
-        match read_credential(username_db) {
+        match read_credential(USERNAME_DB) {
             Ok(credential) => { //credentials exist
                 println!("Please authenticate to use this software.");
                 println!("Enter username:");
@@ -73,102 +87,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let username = username.trim();
 
             println!("Enter password:");
-            let password = read_password().expect("Failed to read password");
-            let password = password.trim();
+            let password = SecretBox::new(Box::new(read_password().expect("Failed to read password")));
+            login(username, password, credential);
+            }
+            Err(error) => { // No credentials exist
+                println!("Error: {error}");
+                println!("No credential found. Prompting for registration...");
+                println!("Enter username you want for your account:");
+                let mut username = String::new();
+                io::stdin()
+                .read_line(&mut username)
+                .expect("Failed to read input");
 
-            // Verifying credentials
-            if argon2::verify_encoded(&credential.username, username.as_bytes()).unwrap() {
-                if argon2::verify_encoded(&credential.secret, password.as_bytes()).unwrap() {
-                    println!("Enter MFA TOTP:");
-                    let mut code = String::new();
-                    io::stdin()
-                    .read_line(&mut code)
-                    .expect("Failed to read input");
-                let mfa_code = code.trim();
+                println!("Enter password you want for your account:");
+                let password = SecretBox::new(Box::new(read_password().expect("Failed to read password")));
 
-                if verify_code!(&base32_secret.expose_secret(), &mfa_code, 1, 0) {
-                    println!("Authentication successful");
-                    // Log an informational event - User authenticated
-                    let log_message = format!("{username} Authenticated successfully.");
-                    log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
-                } else {
-                    println!("Authentication failed.");
-                    let log_message = format!("{username} Failed to authenticate - incorrect MFA.");
-                    log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
+                println!("Enter password again:");
+                let password_again = SecretBox::new(Box::new(read_password().expect("Failed to read password")));
+
+            match register(&username, password, password_again, auth, config.clone()) {
+                Ok(()) => {
+                    //registered
+                }
+                Err(error) => {
+                    //failed
+                    println!("Error: {error}");
+                    print!("Registration error. Please try again.");
                     quit();
                 }
-                // Successful authentication
-            } else {
-                println!("Authentication failed.");
-                let log_message = format!("{username} Failed to authenticate - Wrong credentials.");
-                log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
-                quit();
             }
-        } else {
-            println!("Authentication failed.");
-            let log_message = format!("{username} Failed to authenticate - Wrong credentials.");
-            log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
-            quit();
-        }
-    }
-    Err(error) => { // No credentials exist
-        println!("Error: {error}");
-        println!("No credential found. Prompting for registration...");
-        println!("Enter username you want for your account:");
-        let mut username = String::new();
-        io::stdin()
-        .read_line(&mut username)
-        .expect("Failed to read input");
-
-        println!("Enter password you want for your account:");
-        let password = read_password().expect("Failed to read password");
-        let password = password.trim();
-
-        println!("Enter password again:");
-        let password_again = read_password().expect("Failed to read password");
-        let password_again = password_again.trim();
-
-        if password.trim() == password_again.trim(){
-            let account_name = Some(username.trim().to_string()); // Store trimmed username as a String
-            let account_password = Some(password.trim().to_string()); // Store trimmed password as a String
-
-            println!("Your username is: {} and your password has been set.", account_name.as_ref().unwrap());
-            let log_message = format!("{username} successfully registered.");
-            log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
-            let hash_password = argon2::hash_encoded(account_password.clone().unwrap().as_bytes(), salt, &config).unwrap();
-            let hash_username = argon2::hash_encoded(account_name.clone().unwrap().as_bytes(), salt, &config).unwrap();
-
-            let _ = write_credential(username_db, credential::Credential{
-                username: hash_username.to_owned(),
-                secret: hash_password.to_owned(),
-            });
-
-            let qr_code = auth.qr_code(base32_secret.expose_secret(), "Secure_Programming", &username, 200, 200, ErrorCorrectionLevel::High)
-                .unwrap();
-                // Print out the secret to verify it's correct
-                println!("Secret: {}", base32_secret.expose_secret());
-                println!("Generating QR code, please do not close it without scanning, there is no way to get it again.");
-
-                let random_filename: String = rand::thread_rng()
-                .sample_iter(&Alphanumeric)
-                .take(20) // Specify the length of the random string
-                .map(char::from)
-                .collect();
-
-                let file_name = format!("{}.svg", random_filename);
-
-                thread::sleep(Duration::new(4, 0));
-                let mut file = File::create(&file_name)?;
-                file.write_all(qr_code.as_bytes())?;
-                drop(file);
-
-                open::that(&file_name)?;
-                // Delete the file
-                thread::sleep(Duration::new(1, 0));
-                let path: PathBuf = PathBuf::from(file_name);
-                file_deletion(path)?;
-            }
-
         }
 }
 
@@ -184,7 +131,6 @@ let commands = vec![
     "Delete File",
     "Encrypt Text",
     "Decrypt Text",
-    "Change Password",
     "Quit",
     ];
 
@@ -483,48 +429,6 @@ let commands = vec![
 
                     println!("{}",encryption::text_decryption(ciphertext, key));
                     }
-        "Change Password" => {
-            println!("Enter current password of your account:");
-            let current_password = read_password().expect("Failed to read password");
-            let current_password = current_password.trim();
-
-            println!("Enter password you want for your account:");
-            let password = read_password().expect("Failed to read password");
-            let password = password.trim();
-
-            println!("Enter password again:");
-            let password_again = read_password().expect("Failed to read password");
-            let password_again = password_again.trim();
-
-            let credentials = read_credential(username_db);
-            if argon2::verify_encoded(&credentials.unwrap().secret, current_password.as_bytes()).unwrap() {
-
-                if password.trim() == password_again.trim(){
-                    let account_password = Some(password.trim().to_string()); // Store trimmed password as a String
-
-                let credentials = read_credential(username_db);
-                let hash_password = argon2::hash_encoded(account_password.clone().unwrap().as_bytes(), salt, &config).unwrap();
-                let hash_username = &credentials.unwrap().username;
-
-                let _ = write_credential(username_db, credential::Credential{
-                    username: hash_username.to_owned(),
-                    secret: hash_password.to_owned(),
-                });
-                let log_message = format!("Authenticated user successfully changed authentication credentials.");
-                log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
-                println!("Password changed successfully");
-            } else {
-                let log_message = format!("Authenticated user failed to update credentials. New Password did not match.");
-                log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
-                println!("Passwords don't match.");
-            }
-
-            } else {
-                let log_message = format!("Authenticated user failed to update credentials. User entered wrong password.");
-                log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
-                println!("Wrong password.");
-            }
-        }
         "Quit" => {
             println!("Exiting program...");
             let log_message = format!("Authenticated user exited the program.");
@@ -535,6 +439,136 @@ let commands = vec![
                         println!("Unknown command.");
             }
         }
+    }
+}
+
+fn register(username: &str, password: SecretBox<String>, password_again: SecretBox<String>, auth: GoogleAuthenticator, config: Config<'_> ) -> Result<(), Box<dyn std::error::Error>> {
+    if username.len() < 5 {
+        return Err("Username is too short, please select a longer one.".to_string().into());
+    }
+
+    if password.expose_secret().trim() == password_again.expose_secret().trim(){
+        let account_name = Some(username.trim().to_string()); // Store trimmed username as a String
+        let account_password = Some(password.expose_secret().trim().to_string()); // Store trimmed password as a String
+        let salt_name = account_name.clone().unwrap().to_string() + "1";
+
+        println!("Your username is: {} and your password has been set.", account_name.as_ref().unwrap());
+        let log_message = format!("{username} successfully registered.");
+        log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
+
+        let (salt, derived_key) = derive_key_from_password(password.expose_secret(), None).expect("Key derivation failed");
+        let salt_h = SecretBox::new(Box::new(hex::encode(&salt)));
+
+        let hash_password = argon2::hash_encoded(account_password.clone().unwrap().as_bytes(), salt.as_slice(), &config).unwrap();
+        let hash_username = argon2::hash_encoded(account_name.clone().unwrap().as_bytes(), salt.as_slice(), &config).unwrap();
+        let hash_salt_name = argon2::hash_encoded(salt_name.clone().as_bytes(), salt.as_slice(), &config).unwrap();
+        //set MFA
+
+        let _ = write_credential_custom(USERNAME_DB, Credential{
+            username: hash_username.to_owned(),
+            secret: hash_password.to_owned(),
+        });
+
+        // Convert it to MFA
+        let base32_secret = SecretBox::new(Box::new(encode(Rfc4648 { padding: true }, &derived_key)));
+
+        print!("{}",base32_secret.expose_secret());
+        let _ = write_credential_custom(SALT_DB,  Credential{
+            username: hash_salt_name.to_owned(),
+            secret: salt_h.expose_secret().to_owned(),
+        });
+
+        let qr_code = auth.qr_code(base32_secret.expose_secret(), "Secure_Programming", &username, 200, 200, ErrorCorrectionLevel::High)
+            .unwrap();
+            // Print out the secret to verify it's correct
+            // println!("Secret: {}", base32_secret.expose_secret());
+            println!("Generating QR code, please do not close it without scanning, there is no way to get it again.");
+
+            let random_filename: String = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(20) // Specify the length of the random string
+            .map(char::from)
+            .collect();
+
+            let file_name = format!("{}.svg", random_filename);
+
+            thread::sleep(Duration::new(4, 0));
+            let mut file = File::create(&file_name)?;
+            file.write_all(qr_code.as_bytes())?;
+            drop(file);
+
+            open::that(&file_name)?;
+            // Delete the file
+            thread::sleep(Duration::new(1, 0));
+            let path: PathBuf = PathBuf::from(file_name);
+            file_deletion(path)?;
+        }
+        else {
+            return Err("Passwords do not match".to_string().into());
+        }
+        Ok(())
+}
+
+fn login(username: &str, password: SecretBox<String>, credential: Credential) {
+    // Verifying credentials
+    if argon2::verify_encoded(&credential.username, username.as_bytes()).unwrap() {
+        if argon2::verify_encoded(&credential.secret, password.expose_secret().as_bytes()).unwrap() {
+            // get the salt
+            match read_credential(SALT_DB) {
+                Ok(credential) => { //credentials exist
+                    //print!("{}", credential.secret);
+                    let decoded_secret = match hex::decode(credential.secret) {
+                        Ok(decoded) => Some(decoded), // Pass Vec<u8> directly
+                        Err(_) => None, // Return None if decoding fails
+                    };
+                    let Ok((_salt, derived_key)) = derive_key_from_password(password.expose_secret(), decoded_secret.as_deref()) else { todo!() };
+                    let base32_secret = SecretBox::new(Box::new(encode(Rfc4648 { padding: true }, &derived_key)));
+                    println!("Enter MFA TOTP:");
+
+                    let mut code = String::new();
+                    io::stdin()
+                    .read_line(&mut code)
+                    .expect("Failed to read input");
+                    let mfa_code = code.trim();
+
+                    if verify_code!(&base32_secret.expose_secret(), &mfa_code, 1, 0) {
+                        println!("Authentication successful");
+                        // Log an informational event - User authenticated
+                        let log_message = format!("{username} Authenticated successfully.");
+                        log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
+                    } else {
+                        println!("Authentication failed.");
+                        let log_message = format!("{username} Failed to authenticate - incorrect MFA.");
+                        log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
+                        quit();
+                    }
+                }
+                Err(error) => {
+                    println!("ERROR IS: {}", error );
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                    println!("Authentication failed.");
+                    let log_message = format!("{username} Failed to authenticate - MFA not registered however account exists - CONTACT ADMIN.");
+                    log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
+                    quit();
+                }
+            }
+            // generate the key
+
+
+        // Successful authentication
+    } else {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        println!("Authentication failed.");
+        let log_message = format!("{username} Failed to authenticate - Wrong credentials.");
+        log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
+        quit();
+    }
+    } else {
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    println!("Authentication failed.");
+    let log_message = format!("{username} Failed to authenticate - Wrong credentials.");
+    log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
+    quit();
     }
 }
 
@@ -698,14 +732,184 @@ fn log_to_event_viewer(message: &str, event_type: u16) {
     }
 }
 
+/// Derives a key from a password using PBKDF2
+pub fn derive_key_from_password(password: &str, salt: Option<&[u8]>) -> Result<(Vec<u8>, Vec<u8>), String> {
+    // Generate a new salt if none is provided
+    let salt = match salt {
+        Some(s) => s.to_vec(),
+        None => {
+            let mut salt = vec![0u8; SALT_LENGTH];
+            let rng = SystemRandom::new();
+            rng.fill(&mut salt).map_err(|_| "Failed to generate salt")?;
+            salt
+        }
+    };
+
+    let mut derived_key = vec![0u8; DERIVED_KEY_LENGTH];
+    pbkdf2::derive(
+        pbkdf2::PBKDF2_HMAC_SHA256,
+        *PBKDF2_ITERATIONS,
+        &salt,
+        password.as_bytes(),
+        &mut derived_key,
+    );
+
+    Ok((salt, derived_key))
+}
+
+pub fn write_credential_custom(target: &str, val: Credential) -> Result<(), Box<dyn std::error::Error>> { //Alteration due to persistence
+    // Get the current time as a Windows file time
+    let filetime = Box::new(FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    });
+    let filetime: *mut FILETIME = Box::into_raw(filetime);
+    unsafe { GetSystemTimeAsFileTime(filetime) };
+
+    // Convert all the things into UTF16
+    let secret_len = val.secret.len();
+
+    let target_cstr = U16CString::from_str(target).unwrap();
+    let secret_cstr = U16CString::from_str(val.secret).unwrap();
+    let user_cstr = U16CString::from_str(val.username).unwrap();
+
+    let target_ptr = target_cstr.as_ptr();
+    let secret_ptr = secret_cstr.as_ptr();
+    let user_ptr = user_cstr.as_ptr();
+
+    // Build our credential object
+    let cred = CREDENTIALW {
+        Flags: CRED_FLAGS(NO_FLAGS),
+        Type: CRED_TYPE(GENERIC_CREDENTIAL),
+        TargetName: PWSTR(target_ptr as *mut u16),
+        Comment: PWSTR(std::ptr::null_mut() as *mut u16),
+        LastWritten: unsafe { *filetime },
+        CredentialBlobSize: secret_len as u32 * 2,
+        CredentialBlob: secret_ptr as *mut u8,
+        Persist: CRED_PERSIST(2),
+        AttributeCount: 0,
+        Attributes: std::ptr::null_mut(),
+        TargetAlias: PWSTR(std::ptr::null_mut() as *mut u16),
+        UserName: PWSTR(user_ptr as *mut u16),
+    };
+
+    // Write the credential out
+    unsafe { CredWriteW(&cred, NO_FLAGS).ok()? };
+
+    // Free the file time object we got
+    unsafe { drop(Box::from_raw(filetime)) }
+
+    Ok(())
+}
+
+/// Verify a password against an existing salt and derived key
+pub fn verify_password(password: &str, salt: &[u8], expected_key: &[u8]) -> bool {
+    pbkdf2::verify(
+        pbkdf2::PBKDF2_HMAC_SHA256,
+        *PBKDF2_ITERATIONS,
+        salt,
+        password.as_bytes(),
+        expected_key,
+    )
+    .is_ok()
+}
+
+
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::{Write};
     use std::fs::remove_dir_all;
-
+    use secrecy::SecretBox;
+    use google_authenticator::get_code;
     const TEST_FILES_DIR: &str = "test_files";
+    
+    fn register_test(username: &str, password: SecretBox<String>, password_again: SecretBox<String>, base32_secret: SecretBox<String>, auth: GoogleAuthenticator, username_db:&str, config: Config<'_> ) -> Result<(), Box<dyn std::error::Error>> {
+        let salt = b"858dc1dfe1f";
+        if username.len() < 5 {
+            return Err("Username is too short, please select a longer one.".to_string().into());
+        }
+    
+        if password.expose_secret().trim() == password_again.expose_secret().trim(){
+            let account_name = Some(username.trim().to_string()); // Store trimmed username as a String
+            let account_password = Some(password.expose_secret().trim().to_string()); // Store trimmed password as a String
+    
+            println!("Your username is: {} and your password has been set.", account_name.as_ref().unwrap());
+            let log_message = format!("{username} successfully registered.");
+            log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
+            let hash_password = argon2::hash_encoded(account_password.clone().unwrap().as_bytes(), salt, &config).unwrap();
+            let hash_username = argon2::hash_encoded(account_name.clone().unwrap().as_bytes(), salt, &config).unwrap();
+    
+            let _ = write_credential(username_db, credential::Credential{
+                username: hash_username.to_owned(),
+                secret: hash_password.to_owned(),
+            });
+    
+            let qr_code = auth.qr_code(base32_secret.expose_secret(), "Secure_Programming", &username, 200, 200, ErrorCorrectionLevel::High)
+                .unwrap();
+                // Print out the secret to verify it's correct
+                // println!("Secret: {}", base32_secret.expose_secret());
+                println!("Generating QR code, please do not close it without scanning, there is no way to get it again.");
+    
+                let random_filename: String = rand::thread_rng()
+                .sample_iter(&Alphanumeric)
+                .take(20) // Specify the length of the random string
+                .map(char::from)
+                .collect();
+    
+                let file_name = format!("{}.svg", random_filename);
+    
+                thread::sleep(Duration::new(4, 0));
+                let mut file = File::create(&file_name)?;
+                file.write_all(qr_code.as_bytes())?;
+                drop(file);
+    
+                open::that(&file_name)?;
+                // Delete the file
+                thread::sleep(Duration::new(1, 0));
+                let path: PathBuf = PathBuf::from(file_name);
+                file_deletion(path)?;
+            }
+            else {
+                return Err("Passwords do not match".to_string().into());
+            }
+            Ok(())
+    }
+    
+    fn login_test(username: &str, password: SecretBox<String>, base32_secret: SecretBox<String>, credential: Credential, code: String) { // INCLUDES MFA CODE, REAL FUNCTION PROMPTS IT
+        // Verifying credentials
+        if argon2::verify_encoded(&credential.username, username.as_bytes()).unwrap() {
+            if argon2::verify_encoded(&credential.secret, password.expose_secret().as_bytes()).unwrap() {
+            let mfa_code = code.trim();
+
+            if verify_code!(&base32_secret.expose_secret(), &mfa_code, 1, 0) {
+                println!("Authentication successful");
+                // Log an informational event - User authenticated
+                let log_message = format!("{username} Authenticated successfully.");
+                log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
+            } else {
+                println!("Authentication failed.");
+                let log_message = format!("{username} Failed to authenticate - incorrect MFA.");
+                log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
+                //quit();
+            }
+            // Successful authentication
+        } else {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            println!("Authentication failed.");
+            let log_message = format!("{username} Failed to authenticate - Wrong credentials.");
+            log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
+            //quit();
+        }
+        } else {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        println!("Authentication failed.");
+        let log_message = format!("{username} Failed to authenticate - Wrong credentials.");
+        log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
+        //quit();
+        }
+    }
 
     fn create_local_file_with_content(file_name: &str, content: &[u8]) -> std::io::Result<PathBuf> {
         // Ensure the directory exists
@@ -796,10 +1000,10 @@ mod tests {
         // Arrange: Create an empty local file
         thread::sleep(Duration::new(1, 0));
         let file_path = create_local_file_with_content("test_empty_file.txt", b"").unwrap();
-        
+
         // Ensure the file exists before calling the function
         assert!(file_path.exists(), "File should exist before deletion");
-        
+
         // Act: Call the file_deletion function on an empty file
         thread::sleep(Duration::new(1, 0));
         let result = file_deletion(file_path.clone());
@@ -852,7 +1056,207 @@ mod tests {
     }
 
     //---------------------------------------------------------------------------------
+    #[test]fn test_register_success() {
+        let username = "test_user";
+        let password = SecretBox::new(Box::new("secure_password".to_string()));
+        let password_again = SecretBox::new(Box::new("secure_password".to_string()));
+        let base32_secret = SecretBox::new(Box::new("BASE32SECRET123".to_string()));
+        let auth = GoogleAuthenticator::new();
+        let config = Config::default();
 
+        let result = register(username, password, password_again, base32_secret, auth, "test_db", config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_register_password_mismatch() {
+        let username = "test_user";
+        let password = SecretBox::new(Box::new("secure_password".to_string()));
+        let password_again = SecretBox::new(Box::new("different_password".to_string()));
+        let base32_secret = SecretBox::new(Box::new("BASE32SECRET123".to_string()));
+        let auth = GoogleAuthenticator::new();
+        let config = Config::default();
+
+        let result = register_test(username, password, password_again, base32_secret, auth, "test_db", config);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_login_success() {
+        let username = "test_user";
+        let password = SecretBox::new(Box::new("secure_password".to_string()));
+        let base32_secret = SecretBox::new(Box::new("BASE32SECRET123".to_string()));
+        let credential = Credential {
+            username: argon2::hash_encoded(username.as_bytes(), b"salt12345678", &Config::default()).unwrap(),
+            secret: argon2::hash_encoded(password.expose_secret().as_bytes(), b"salt12345678", &Config::default()).unwrap(),
+        };
+        if let Ok(code) = get_code!(base32_secret.expose_secret()) {
+            login_test(username, password, base32_secret, credential, code);
+        }
+    }
+
+    #[test]
+    fn test_login_incorrect_password() {
+        let username = "test_user";
+        let password = SecretBox::new(Box::new("wrong_password".to_string()));
+        let base32_secret = SecretBox::new(Box::new("BASE32SECRET123".to_string()));
+        let credential = Credential {
+            username: argon2::hash_encoded(username.as_bytes(), b"salt12345678", &Config::default()).unwrap(),
+            secret: argon2::hash_encoded("secure_password".as_bytes(), b"salt12345678", &Config::default()).unwrap(),
+        };
+        if let Ok(code) = get_code!(base32_secret.expose_secret()) {
+            login_test(username, password, base32_secret, credential, code);
+        }
+    }
+
+    #[test]
+    fn test_register_valid_inputs() {
+        let username = "test_user";
+        let password = SecretBox::new(Box::new("secure_password".to_string()));
+        let password_again = SecretBox::new(Box::new("secure_password".to_string()));
+        let base32_secret = SecretBox::new(Box::new("MZXW6YTBOI======".to_string()));
+        let auth = GoogleAuthenticator::new();
+        let username_db = "test_db.json";
+        let config = argon2::Config::default();
+
+        let result = register_test(username, password, password_again, base32_secret, auth, username_db, config);
+        assert!(result.is_ok(), "Registration failed unexpectedly: {:?}", result);
+    }
+
+    #[test]
+    fn test_register_password_mismatch2() {
+        let username = "test_user";
+        let password = SecretBox::new(Box::new("secure_password".to_string()));
+        let password_again = SecretBox::new(Box::new("different_password".to_string()));
+        let base32_secret = SecretBox::new(Box::new("MZXW6YTBOI======".to_string()));
+        let auth = GoogleAuthenticator::new();
+        let username_db = "test_db.json";
+        let config = argon2::Config::default();
+
+        let result = register_test(username, password, password_again, base32_secret, auth, username_db, config);
+        assert!(result.is_err(), "Registration succeeded despite password mismatch.");
+    }
+
+    #[test]
+    fn test_register_empty_username() {
+        let username = "";
+        let password = SecretBox::new(Box::new("secure_password".to_string()));
+        let password_again = SecretBox::new(Box::new("secure_password".to_string()));
+        let base32_secret = SecretBox::new(Box::new("MZXW6YTBOI======".to_string()));
+        let auth = GoogleAuthenticator::new();
+        let username_db = "test_db.json";
+        let config = argon2::Config::default();
+
+        let result = register_test(username, password, password_again, base32_secret, auth, username_db, config);
+        assert!(result.is_err(), "Registration succeeded with empty username.");
+    }
+
+    #[test]
+    fn test_login_valid_credentials() {
+        let username = "test_user";
+        let password = SecretBox::new(Box::new("secure_password".to_string()));
+        let credential = Credential {
+            username: argon2::hash_encoded(username.as_bytes(), b"salt12345678", &argon2::Config::default()).unwrap(),
+            secret: argon2::hash_encoded(password.expose_secret().as_bytes(), b"salt12345678", &argon2::Config::default()).unwrap(),
+        };
+        let base32_secret = SecretBox::new(Box::new("MZXW6YTBOI======".to_string()));
+
+        if let Ok(code) = get_code!(base32_secret.expose_secret()) {
+            login_test(username, password, base32_secret, credential, code);
+        }
+        // If no panic or quit occurs, the test passes
+    }
+
+    #[test]
+    fn test_login_invalid_password() {
+        let username = "test_user";
+        let password = SecretBox::new(Box::new("wrong_password".to_string()));
+        let credential = Credential {
+            username: argon2::hash_encoded(username.as_bytes(), b"salt12345678", &argon2::Config::default()).unwrap(),
+            secret: argon2::hash_encoded("secure_password".as_bytes(), b"salt12345678", &argon2::Config::default()).unwrap(),
+        };
+        let base32_secret = SecretBox::new(Box::new("MZXW6YTBOI======".to_string()));
+
+        if let Ok(code) = get_code!(base32_secret.expose_secret()) {
+            login_test(username, password, base32_secret, credential, code);
+        }
+        // If login fails gracefully without panicking, the test passes
+    }
+
+    #[test]
+    fn test_login_invalid_username() {
+        let username = "nonexistent_user";
+        let password = SecretBox::new(Box::new("secure_password".to_string()));
+        let credential = Credential {
+            username: argon2::hash_encoded("test_user".as_bytes(), b"salt12345678", &argon2::Config::default()).unwrap(),
+            secret: argon2::hash_encoded(password.expose_secret().as_bytes(), b"salt12345678", &argon2::Config::default()).unwrap(),
+        };
+        let base32_secret = SecretBox::new(Box::new("MZXW6YTBOI======".to_string()));
+
+        if let Ok(code) = get_code!(base32_secret.expose_secret()) {
+            login_test(username, password, base32_secret, credential, code);
+        }
+        // If login fails gracefully without panicking, the test passes
+    }
+
+    #[test]
+    fn test_register_concurrent() {
+        let num_threads = 10;
+        let username_db = "test_db.json";
+
+        let handles: Vec<_> = (0..num_threads).map(|i| {
+            let username = format!("test_user_{}", i);
+            let password = SecretBox::new(Box::new("secure_password".to_string()));
+            let password_again = SecretBox::new(Box::new("secure_password".to_string()));
+
+            std::thread::spawn(move || {
+                let config = argon2::Config::default();
+                let base32_secret = SecretBox::new(Box::new("MZXW6YTBOI======".to_string()));
+                let auth = GoogleAuthenticator::new();
+                let result = register(&username, password, password_again, base32_secret, auth, username_db, config);
+                assert!(result.is_ok(), "Registration failed for user {}: {:?}", i, result);
+            })
+        }).collect();
+
+        for handle in handles {
+            handle.join().expect("Thread panicked");
+        }
+    }
+
+    #[test]
+    fn test_login_timing_attack_resistance() {
+        let username = "test_user";
+        let password: SecretBox<String> = SecretBox::new(Box::new("secure_password".to_string()));
+        let credential = Credential {
+            username: argon2::hash_encoded(username.as_bytes(), b"salt12345678", &argon2::Config::default()).unwrap(),
+            secret: argon2::hash_encoded(password.expose_secret().as_bytes(), b"salt12345678", &argon2::Config::default()).unwrap(),
+        };
+        let base32_secret = SecretBox::new(Box::new("MZXW6YTBOI======".to_string()));
+
+        let start_time = std::time::Instant::now();
+        if let Ok(code) = get_code!(base32_secret.expose_secret()) {
+            login_test(username, password, base32_secret, credential, code);
+        }
+        let duration_valid = start_time.elapsed();
+
+        let username = "test_user";
+        let password: SecretBox<String> = SecretBox::new(Box::new("secure_password".to_string()));
+        let credential = Credential {
+            username: argon2::hash_encoded(username.as_bytes(), b"salt12345678", &argon2::Config::default()).unwrap(),
+            secret: argon2::hash_encoded(password.expose_secret().as_bytes(), b"salt12345678", &argon2::Config::default()).unwrap(),
+        };
+
+        let base32_secret = SecretBox::new(Box::new("MZXW6YTBOI======".to_string()));
+        let invalid_password = SecretBox::new(Box::new("wrong_password".to_string()));
+        let start_time = std::time::Instant::now();
+        if let Ok(code) = get_code!(base32_secret.expose_secret()) {
+            login_test(username, invalid_password, base32_secret, credential, code);
+        }
+        let duration_invalid = start_time.elapsed();
+
+        print!("Duratin valid is: {:?}, Duration invalid is: {:?}", duration_valid.as_millis() as i128, duration_invalid.as_millis() as i128);
+        assert!(((duration_valid.as_millis() as i128 - duration_invalid.as_millis() as i128)).abs() < 200, "Timing difference detected duration valid is");
+    }
 
 
 }
