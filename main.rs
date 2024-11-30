@@ -41,6 +41,9 @@ use lazy_static;
 use resvg::tiny_skia::{Pixmap, Transform};
 use resvg::usvg::{Options, Tree};
 use minifb::{Key, Window, WindowOptions};
+use std::fs::File;
+use std::io::ErrorKind;
+
 
 const NO_FLAGS: u32 = 0;
 const GENERIC_CREDENTIAL: u32 = 1;
@@ -52,6 +55,21 @@ const DERIVED_KEY_LENGTH: usize = 32;
 
 lazy_static::lazy_static! {
     static ref PBKDF2_ITERATIONS: NonZeroU32 = NonZeroU32::new(100_000).expect("Invalid iterations");
+}
+
+#[derive(Debug)]
+pub enum FileError {
+    FileNotFound,
+    InvalidExtension,
+    FileTooLarge,
+    InvalidPermissions,
+    IoError(io::Error),
+}
+
+impl From<io::Error> for FileError {
+    fn from(error: io::Error) -> Self {
+        FileError::IoError(error)
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -87,7 +105,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let username = username.trim();
 
             println!("Enter password:");
-            let password = SecretBox::new(Box::new(read_password().expect("Failed to read password")));
+            let password = sanitize_password(SecretBox::new(Box::new(read_password().expect("Failed to read password"))))?;
             login(username, password, credential);
             }
             Err(error) => { // No credentials exist
@@ -100,10 +118,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .expect("Failed to read input");
 
                 println!("Enter password you want for your account:");
-                let password = SecretBox::new(Box::new(read_password().expect("Failed to read password")));
+                let password = sanitize_password(SecretBox::new(Box::new(read_password().expect("Failed to read password"))))?;
 
                 println!("Enter password again:");
-                let password_again = SecretBox::new(Box::new(read_password().expect("Failed to read password")));
+                let password_again = sanitize_password(SecretBox::new(Box::new(read_password().expect("Failed to read password"))))?;
 
             match register(&username, password, password_again, auth, config.clone()) {
                 Ok(()) => {
@@ -456,7 +474,7 @@ fn register(username: &str, password: SecretBox<String>, password_again: SecretB
         let log_message = format!("{username} successfully registered.");
         log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
 
-        let (salt, derived_key) = derive_key_from_password(password.expose_secret(), None).expect("Key derivation failed");
+        let (salt, derived_key) = derive_key_from_password(password, None).expect("Key derivation failed");
         let salt_h = SecretBox::new(Box::new(hex::encode(&salt)));
 
         let hash_password = argon2::hash_encoded(account_password.clone().unwrap().as_bytes(), salt.as_slice(), &config).unwrap();
@@ -533,7 +551,7 @@ fn login(username: &str, password: SecretBox<String>, credential: Credential) {
                         Ok(decoded) => Some(decoded), // Pass Vec<u8> directly
                         Err(_) => None, // Return None if decoding fails
                     };
-                    let Ok((_salt, derived_key)) = derive_key_from_password(password.expose_secret(), decoded_secret.as_deref()) else { todo!() };
+                    let Ok((_salt, derived_key)) = derive_key_from_password(password, decoded_secret.as_deref()) else { todo!() };
                     let base32_secret = SecretBox::new(Box::new(encode(Rfc4648 { padding: true }, &derived_key)));
                     println!("Enter MFA TOTP:");
 
@@ -626,7 +644,6 @@ fn display_qr_code(svg_data: &[u8]) {
 
     window.set_position(0, 0); // Move window to the top-left corner
 
-    
     // Ensure the window pops up and stays in the foreground (this depends on the system)
     // Event loop for window interactions
     while window.is_open() && !window.is_key_down(Key::Escape) {
@@ -700,7 +717,6 @@ fn help_menu() {
     Delete File                 - Secure file deletion, 10 iterations of rewrite before deletion. Prompts file path.
     Encrypt                     - Encrypts a message. Prompts text and key.
     Decrypt                     - Decrypts a message. Prompts text and key.
-    Change Password             - Enables you to change your current account's password.
     Quit                        - Quit the program.
     ");
 }
@@ -798,7 +814,7 @@ fn log_to_event_viewer(message: &str, event_type: u16) {
 }
 
 /// Derives a key from a password using PBKDF2
-pub fn derive_key_from_password(password: &str, salt: Option<&[u8]>) -> Result<(Vec<u8>, Vec<u8>), String> {
+pub fn derive_key_from_password(password: SecretBox<String>, salt: Option<&[u8]>) -> Result<(Vec<u8>, Vec<u8>), String> {
     // Generate a new salt if none is provided
     let salt = match salt {
         Some(s) => s.to_vec(),
@@ -815,7 +831,7 @@ pub fn derive_key_from_password(password: &str, salt: Option<&[u8]>) -> Result<(
         pbkdf2::PBKDF2_HMAC_SHA256,
         *PBKDF2_ITERATIONS,
         &salt,
-        password.as_bytes(),
+        password.expose_secret().as_bytes(),
         &mut derived_key,
     );
 
@@ -879,8 +895,48 @@ pub fn verify_password(password: &str, salt: &[u8], expected_key: &[u8]) -> bool
     .is_ok()
 }
 
+pub fn sanitize_file_input(file_path: &str) -> Result<std::path::PathBuf, FileError> {
+    let path = Path::new(file_path);
 
+    // 1. Check if file exists
+    if !path.exists() {
+        return Err(FileError::FileNotFound);
+    }
 
+    // 2. Attempt to open the file
+    match File::open(path) {
+        Ok(_) => {
+            // If it opens successfully, check if it's read-only
+            let metadata = fs::metadata(path).map_err(|_| FileError::InvalidPermissions)?;
+            if metadata.permissions().readonly() {
+                return Err(FileError::InvalidPermissions);
+            }
+            Ok(path.to_path_buf())
+        }
+        Err(e) => {
+            if e.kind() == ErrorKind::PermissionDenied {
+                return Err(FileError::InvalidPermissions);
+            }
+            Err(FileError::FileNotFound)
+        }
+    }
+}
+
+pub fn sanitize_password(password: SecretBox<String>) -> Result<SecretBox<String>, Box<dyn std::error::Error>> {
+
+    let sanitized = SecretBox::new(Box::new(password.expose_secret().trim().to_string())); // Trim whitespace
+
+    if sanitized.expose_secret().len() < 8 {
+        return Err("Password has to be at least 8 characters".to_string().into());
+    }
+
+    if sanitized.expose_secret().chars().any(|c| c.is_control()) {
+        return Err("Password contains invalid control characters.".to_string().into());
+    }
+
+    Ok(sanitized)
+
+}
 
 #[cfg(test)]
 mod tests {
@@ -981,16 +1037,15 @@ mod tests {
 
     fn create_local_file_with_content(file_name: &str, content: &[u8]) -> std::io::Result<PathBuf> {
         // Ensure the directory exists
-        create_dir_all(TEST_FILES_DIR)?;
+        fs::create_dir_all(TEST_FILES_DIR)?;
 
-        let file_path = PathBuf::from(TEST_FILES_DIR).join(file_name);
-        let path = PathBuf::from(file_path);
+        let file_path = Path::new(TEST_FILES_DIR).join(file_name);
         {
-        let mut file = File::create(&path)?; // File is scoped to ensure it gets dropped
-        file.write_all(content)?;
+            let mut file = File::create(&file_path)?; // File is scoped to ensure it gets dropped
+            file.write_all(content)?;
         } // File is dropped here
         thread::sleep(Duration::new(1, 0));
-        Ok(path)
+        Ok(file_path)
     }
 
     #[test]
@@ -1086,12 +1141,14 @@ mod tests {
         // Arrange: Create a file with random data
         let file_content: Vec<u8> = (0..1024).map(|_| rand::random::<u8>()).collect();
         let file_path = create_local_file_with_content("test_random_data.txt", &file_content).unwrap();
+        thread::sleep(Duration::new(2, 0));
 
         // Ensure the file exists before calling the function
         assert!(file_path.exists(), "File should exist before deletion");
 
         // Act: Call the file_deletion function
         let result = file_deletion(file_path.clone());
+        thread::sleep(Duration::new(2, 0));
 
         // Assert: Ensure the result is Ok and the file is deleted
         assert!(result.is_ok(), "file_deletion should succeed");
@@ -1110,7 +1167,7 @@ mod tests {
 
         // Act: Call the file_deletion function, which overwrites the file multiple times
         let result = file_deletion(file_path.clone());
-        
+
         // Assert: Ensure the result is Ok and the file is deleted
         assert!(result.is_ok(), "file_deletion should succeed after overwriting");
         assert!(!file_path.exists(), "File should be deleted after file_deletion");
@@ -1291,42 +1348,82 @@ mod tests {
         }
     }
 
-    /*
-    #[test] TEST CAN BE OMITTED, login success and login failure times vary and are inconsistent
-    fn test_login_timing_attack_resistance() {
-        let username = "test_user";
-        let password: SecretBox<String> = SecretBox::new(Box::new("secure_password".to_string()));
-        let credential = Credential {
-            username: argon2::hash_encoded(username.as_bytes(), b"salt12345678", &argon2::Config::default()).unwrap(),
-            secret: argon2::hash_encoded(password.expose_secret().as_bytes(), b"salt12345678", &argon2::Config::default()).unwrap(),
-        };
-        let base32_secret = SecretBox::new(Box::new("MZXW6YTBOI======".to_string()));
-        
-        let start_time = std::time::Instant::now();
-        if let Ok(code) = get_code!(base32_secret.expose_secret()) {
-            login_test(username, password, base32_secret, credential, code);
-        }
-        let duration_valid = start_time.elapsed();
-        
-        let username = "test_user";
-        let password: SecretBox<String> = SecretBox::new(Box::new("secure_password".to_string()));
-        let credential = Credential {
-            username: argon2::hash_encoded(username.as_bytes(), b"salt12345678", &argon2::Config::default()).unwrap(),
-            secret: argon2::hash_encoded(password.expose_secret().as_bytes(), b"salt12345678", &argon2::Config::default()).unwrap(),
-        };
-        
-        let base32_secret = SecretBox::new(Box::new("MZXW6YTBOI======".to_string()));
-        let invalid_password = SecretBox::new(Box::new("wrong_password".to_string()));
-        let start_time = std::time::Instant::now();
-        if let Ok(code) = get_code!(base32_secret.expose_secret()) {
-            login_test(username, invalid_password, base32_secret, credential, code);
-        }
-        let duration_invalid = start_time.elapsed();
-        
-        print!("Duratin valid is: {:?}, Duration invalid is: {:?}", duration_valid.as_millis() as i128, duration_invalid.as_millis() as i128);
-        assert!(((duration_valid.as_millis() as i128 - duration_invalid.as_millis() as i128)).abs() < 200, "Timing difference detected duration valid is");
+    #[test]
+    fn test_sanitize_file_input_file_not_found() {
+        // Test a file that doesn't exist
+        let result = sanitize_file_input("non_existent_file.txt");
+        assert!(matches!(result, Err(FileError::FileNotFound)));
     }
-    */
-    
 
+    #[test]
+    fn test_sanitize_file_input_file_exists_and_readable() {
+        // Create a test file
+        let test_file = create_local_file_with_content("test_file.txt", b"test content").unwrap();
+        let test_file_path = test_file.to_str().unwrap();
+
+        // Ensure the file is created and available
+        assert!(Path::new(test_file_path).exists());
+
+        // Test sanitization
+        let result = sanitize_file_input(test_file_path);
+        assert!(result.is_ok(), "Expected Ok, got Err: {:?}", result.err());
+        assert_eq!(result.unwrap(), test_file);
+
+        // Clean up
+        fs::remove_file(test_file).unwrap();
+    }
+
+    #[test]
+    fn test_sanitize_file_input_invalid_permissions() {
+        // Create a test file
+        let test_file = create_local_file_with_content("test_file_no_read.txt", b"test content").unwrap();
+
+        // Set restrictive permissions (read-only for Windows)
+        let mut permissions = fs::metadata(&test_file).unwrap().permissions();
+        permissions.set_readonly(true); // Set the file as read-only
+        fs::set_permissions(&test_file, permissions).unwrap();
+
+        // Test sanitization with read-only permissions
+        let result = sanitize_file_input(test_file.to_str().unwrap());
+        assert!(matches!(result, Err(FileError::InvalidPermissions)),
+            "Expected InvalidPermissions, got: {:?}", result);
+
+        // Clean up: Restore permissions to allow deletion
+        let mut permissions = fs::metadata(&test_file).unwrap().permissions();
+        permissions.set_readonly(false); // Restore to writable
+        fs::set_permissions(&test_file, permissions).unwrap();
+
+        // Remove the file
+        fs::remove_file(test_file).unwrap();
+    }
+
+    #[test]
+    fn test_sanitize_password_valid() {
+        let password = SecretBox::new(Box::new("  P@ssw0rd!  ".to_string()));
+        let result = sanitize_password(password);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().expose_secret(), "P@ssw0rd!");
+    }
+
+    #[test]
+    fn test_sanitize_password_too_short() {
+        let password = SecretBox::new(Box::new("short".to_string()));
+        let result = sanitize_password(password);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Password has to be at least 8 characters"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_password_invalid_control_characters() {
+        let password = SecretBox::new(Box::new("valid\x07pass".to_string())); // Includes a control character
+        let result = sanitize_password(password);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Password contains invalid control characters."
+        );
+    }
 }
