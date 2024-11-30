@@ -10,7 +10,6 @@ use hex::FromHex;
 use std::fs::{OpenOptions, remove_file};
 use std::fs;
 use std::io::{Seek, SeekFrom};
-use std::fs::File;
 use std::path::Path;
 use std::thread;
 use std::time::Duration;
@@ -21,8 +20,6 @@ use argon2::{self, Config};
 use rpassword::read_password;
 use google_authenticator::{GoogleAuthenticator, ErrorCorrectionLevel, GA_AUTH, verify_code};
 use secrecy::{SecretBox, ExposeSecret};
-use open;
-use rand::distributions::Alphanumeric;
 use base32::encode;
 use base32::Alphabet::Rfc4648;
 use dialoguer::{theme::ColorfulTheme, Select};
@@ -41,12 +38,15 @@ use ring::pbkdf2;
 use ring::rand::{SecureRandom, SystemRandom};
 use std::num::NonZeroU32;
 use lazy_static;
+use resvg::tiny_skia::{Pixmap, Transform};
+use resvg::usvg::{Options, Tree};
+use minifb::{Key, Window, WindowOptions};
 
 const NO_FLAGS: u32 = 0;
 const GENERIC_CREDENTIAL: u32 = 1;
 const STORAGE_FILES_DIR: &str = "C:\\secureprogramming\\";
-const SALT_DB : &str = "secureprogramming-user32";
-const USERNAME_DB : &str = "secureprogramming-user23";
+const SALT_DB : &str = "secureprogramming-user32test10";
+const USERNAME_DB : &str = "secureprogramming-user23test10";
 const SALT_LENGTH: usize = 16;
 const DERIVED_KEY_LENGTH: usize = 32;
 
@@ -472,36 +472,48 @@ fn register(username: &str, password: SecretBox<String>, password_again: SecretB
         // Convert it to MFA
         let base32_secret = SecretBox::new(Box::new(encode(Rfc4648 { padding: true }, &derived_key)));
 
-        print!("{}",base32_secret.expose_secret());
+
         let _ = write_credential_custom(SALT_DB,  Credential{
             username: hash_salt_name.to_owned(),
             secret: salt_h.expose_secret().to_owned(),
         });
 
-        let qr_code = auth.qr_code(base32_secret.expose_secret(), "Secure_Programming", &username, 200, 200, ErrorCorrectionLevel::High)
-            .unwrap();
+            let qr_code = auth.qr_code(base32_secret.expose_secret(), "Secure_Programming", &username, 200, 200, ErrorCorrectionLevel::High).unwrap();
+
+
             // Print out the secret to verify it's correct
             // println!("Secret: {}", base32_secret.expose_secret());
-            println!("Generating QR code, please do not close it without scanning, there is no way to get it again.");
+            println!("Generating QR code for MFA, please do not close it without scanning it without authenticator! there is no way to get it again.");
 
-            let random_filename: String = rand::thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(20) // Specify the length of the random string
-            .map(char::from)
-            .collect();
+            let qr_svg = qr_code.as_bytes(); // The SVG data from `auth.qr_code`
+            display_qr_code(qr_svg);
 
-            let file_name = format!("{}.svg", random_filename);
-
+            // Add delay for user to scan the QR code
             thread::sleep(Duration::new(4, 0));
-            let mut file = File::create(&file_name)?;
-            file.write_all(qr_code.as_bytes())?;
-            drop(file);
-
-            open::that(&file_name)?;
-            // Delete the file
-            thread::sleep(Duration::new(1, 0));
-            let path: PathBuf = PathBuf::from(file_name);
-            file_deletion(path)?;
+            println!("Did you accidently close it and want it to be displayed again?");
+            io::stdout().flush().unwrap();
+            let commands = vec![
+                "Yes",
+                "No",
+                ];
+                // Display the menu and let the user select a command
+                let selection = Select::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Choose a command")
+                    .items(&commands)
+                    .default(0) // Preselect the first item
+                    .interact()
+                    .expect("Failed to display menu");
+            match commands[selection] {
+                "Yes" => {
+                        println!("Regenerating QR code.");
+                        display_qr_code(qr_svg);
+                        return Ok(())
+                    }
+                    "No" => {//continue
+                        }
+                    _ => {//continue
+                    }
+                }
         }
         else {
             return Err("Passwords do not match".to_string().into());
@@ -569,6 +581,59 @@ fn login(username: &str, password: SecretBox<String>, credential: Credential) {
     let log_message = format!("{username} Failed to authenticate - Wrong credentials.");
     log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
     quit();
+    }
+}
+
+fn display_qr_code(svg_data: &[u8]) {
+    // Parse the SVG data into a tree
+    let options = Options::default();
+    let tree = Tree::from_data(svg_data, &options).expect("Failed to parse SVG data");
+
+    // Create a Pixmap for rendering
+    let pixmap_size = tree.size();
+    let mut pixmap = Pixmap::new(pixmap_size.width() as u32, pixmap_size.height() as u32)
+        .expect("Failed to create Pixmap");
+
+    // Render the SVG to the Pixmap
+    resvg::render(
+        &tree,
+        Transform::default(),
+        &mut pixmap.as_mut(),
+    );
+
+    // Prepare the buffer for `minifb`
+    let width = pixmap.width();
+    let height = pixmap.height();
+    let buffer: Vec<u32> = pixmap
+        .pixels()
+        .iter()
+        .map(|p| {
+            let color = p; // `to_color` replaces the invalid `color` method
+            ((color.red() as u32) << 16) | ((color.green() as u32) << 8) | (color.blue() as u32)
+        })
+        .collect();
+
+    // Display the PNG in a window
+    let mut window = Window::new(
+        "QR Code - Scan It!",
+        width as usize,
+        height as usize,
+        WindowOptions::default(),
+    )
+    .unwrap_or_else(|e| {
+        panic!("Unable to create window: {}", e);
+    });
+
+    window.set_position(0, 0); // Move window to the top-left corner
+
+    
+    // Ensure the window pops up and stays in the foreground (this depends on the system)
+    // Event loop for window interactions
+    while window.is_open() && !window.is_key_down(Key::Escape) {
+        window
+            .update_with_buffer(&buffer, width as usize, height as usize)
+            .unwrap();
+        window.update(); // Ensure window is updated on each frame.
     }
 }
 
@@ -815,11 +880,12 @@ pub fn verify_password(password: &str, salt: &[u8], expected_key: &[u8]) -> bool
 }
 
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::{Write};
+    use rand::distributions::Alphanumeric;
+    use std::fs::File;
     use std::fs::remove_dir_all;
     use secrecy::SecretBox;
     use google_authenticator::get_code;
