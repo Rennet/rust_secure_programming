@@ -2,3 +2,5 @@
 *.encrypted.rt
 /fuzz
 /test_files
+main.pdb
+main.exe
