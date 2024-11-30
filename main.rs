@@ -824,47 +824,47 @@ mod tests {
     use secrecy::SecretBox;
     use google_authenticator::get_code;
     const TEST_FILES_DIR: &str = "test_files";
-    
+
     fn register_test(username: &str, password: SecretBox<String>, password_again: SecretBox<String>, base32_secret: SecretBox<String>, auth: GoogleAuthenticator, username_db:&str, config: Config<'_> ) -> Result<(), Box<dyn std::error::Error>> {
         let salt = b"858dc1dfe1f";
         if username.len() < 5 {
             return Err("Username is too short, please select a longer one.".to_string().into());
         }
-    
+
         if password.expose_secret().trim() == password_again.expose_secret().trim(){
             let account_name = Some(username.trim().to_string()); // Store trimmed username as a String
             let account_password = Some(password.expose_secret().trim().to_string()); // Store trimmed password as a String
-    
+
             println!("Your username is: {} and your password has been set.", account_name.as_ref().unwrap());
             let log_message = format!("{username} successfully registered.");
             log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
             let hash_password = argon2::hash_encoded(account_password.clone().unwrap().as_bytes(), salt, &config).unwrap();
             let hash_username = argon2::hash_encoded(account_name.clone().unwrap().as_bytes(), salt, &config).unwrap();
-    
+
             let _ = write_credential(username_db, credential::Credential{
                 username: hash_username.to_owned(),
                 secret: hash_password.to_owned(),
             });
-    
+
             let qr_code = auth.qr_code(base32_secret.expose_secret(), "Secure_Programming", &username, 200, 200, ErrorCorrectionLevel::High)
                 .unwrap();
                 // Print out the secret to verify it's correct
                 // println!("Secret: {}", base32_secret.expose_secret());
                 println!("Generating QR code, please do not close it without scanning, there is no way to get it again.");
-    
+
                 let random_filename: String = rand::thread_rng()
                 .sample_iter(&Alphanumeric)
                 .take(20) // Specify the length of the random string
                 .map(char::from)
                 .collect();
-    
+
                 let file_name = format!("{}.svg", random_filename);
-    
+
                 thread::sleep(Duration::new(4, 0));
                 let mut file = File::create(&file_name)?;
                 file.write_all(qr_code.as_bytes())?;
                 drop(file);
-    
+
                 open::that(&file_name)?;
                 // Delete the file
                 thread::sleep(Duration::new(1, 0));
@@ -876,7 +876,7 @@ mod tests {
             }
             Ok(())
     }
-    
+
     fn login_test(username: &str, password: SecretBox<String>, base32_secret: SecretBox<String>, credential: Credential, code: String) { // INCLUDES MFA CODE, REAL FUNCTION PROMPTS IT
         // Verifying credentials
         if argon2::verify_encoded(&credential.username, username.as_bytes()).unwrap() {
@@ -1064,7 +1064,7 @@ mod tests {
         let auth = GoogleAuthenticator::new();
         let config = Config::default();
 
-        let result = register(username, password, password_again, base32_secret, auth, "test_db", config);
+        let result = register_test(username, password, password_again, base32_secret, auth, "test_db", config);
         assert!(result.is_ok());
     }
 
@@ -1213,7 +1213,7 @@ mod tests {
                 let config = argon2::Config::default();
                 let base32_secret = SecretBox::new(Box::new("MZXW6YTBOI======".to_string()));
                 let auth = GoogleAuthenticator::new();
-                let result = register(&username, password, password_again, base32_secret, auth, username_db, config);
+                let result = register_test(&username, password, password_again, base32_secret, auth, username_db, config);
                 assert!(result.is_ok(), "Registration failed for user {}: {:?}", i, result);
             })
         }).collect();
