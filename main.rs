@@ -48,8 +48,8 @@ use std::io::ErrorKind;
 const NO_FLAGS: u32 = 0;
 const GENERIC_CREDENTIAL: u32 = 1;
 const STORAGE_FILES_DIR: &str = "C:\\secureprogramming\\";
-const SALT_DB : &str = "secureprogramming-user32test10";
-const USERNAME_DB : &str = "secureprogramming-user23test10";
+const SALT_DB : &str = "secureprogramming-user31";
+const USERNAME_DB : &str = "secureprogramming-user13";
 const SALT_LENGTH: usize = 16;
 const DERIVED_KEY_LENGTH: usize = 32;
 
