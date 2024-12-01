@@ -108,8 +108,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let password = sanitize_password(SecretBox::new(Box::new(read_password().expect("Failed to read password"))))?;
             login(username, password, credential);
             }
-            Err(error) => { // No credentials exist
-                println!("Error: {error}");
+            Err(_) => { // No credentials exist
                 println!("No credential found. Prompting for registration...");
                 println!("Enter username you want for your account:");
                 let mut username = String::new();
@@ -129,8 +128,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 Err(error) => {
                     //failed
-                    println!("Error: {error}");
-                    print!("Registration error. Please try again.");
+                    let log_message = format!("Registration failed: {error}");
+                    log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
+                    println!("Registration error. Please try again.");
                     quit();
                 }
             }
@@ -196,6 +196,7 @@ let commands = vec![
 
             if key_choice.trim().eq_ignore_ascii_case("y") {
                 key = generate_random_aes_key();
+                println!("AES Key: {:?}", hex::encode(&key).trim());
             } else {
                 let mut byte_array = [0u8; 32];
                 println!("Enter the key for the file you want to encrypt:");
@@ -209,7 +210,6 @@ let commands = vec![
                     Some(valid_key) => {
                     // Copy the validated key into `byte_array`
                     byte_array.copy_from_slice(&valid_key);
-                    println!("AES Key: {:?}", byte_array);
                     }
                 None => {
                 // if invalid input, promt again.
@@ -251,7 +251,6 @@ let commands = vec![
                 Some(valid_key) => {
                     // Copy the validated key into `byte_array`
                     byte_array.copy_from_slice(&valid_key);
-                    println!("AES Key: {:?}", byte_array);
                 }
                 None => {
                     // if invalid input, promt again.
@@ -292,6 +291,7 @@ let commands = vec![
 
             if key_choice.trim().eq_ignore_ascii_case("y") {
                 key = generate_random_aes_key();
+                println!("AES Key: {:?}", hex::encode(&key).trim());
             } else {
                 let mut byte_array = [0u8; 32];
                 println!("Enter the key for the file you want to encrypt:");
@@ -305,7 +305,6 @@ let commands = vec![
                     Some(valid_key) => {
                     // Copy the validated key into `byte_array`
                     byte_array.copy_from_slice(&valid_key);
-                    println!("AES Key: {:?}", byte_array);
                     }
                 None => {
                 // if invalid input, promt again.
@@ -347,15 +346,12 @@ let commands = vec![
                     Some(valid_key) => {
                         // Copy the validated key into `byte_array`
                         byte_array.copy_from_slice(&valid_key);
-                        println!("AES Key: {:?}", byte_array);
                     }
                     None => {
                         // if invalid input, promt again.
                     }
                 }
                 let key: GenericArray<u8, U32> = GenericArray::from(byte_array);
-                
-                println!("{:?}", hex::encode(&key));
                 encryption::file_decryption(file_path, key)?;
             }
         "Delete File" => {
@@ -388,31 +384,38 @@ let commands = vec![
                         .read_line(&mut plaintext)
                         .expect("Failed to read input");
 
-                    println!("Enter a key, or leave empty for randomly generated one.");
-                    let mut byte_array = [0u8; 32];
-                    let mut entered_key = String::new();
-                    io::stdin()
-                    .read_line(&mut entered_key)
-                    .expect("Failed to read input");
+                    println!("Do you want to automatically generate the key? If you have your own key, press any other key (y/n):");
+                        let mut key_choice = String::new();
+                        io::stdin()
+                        .read_line(&mut key_choice)
+                        .expect("Failed to read input");
 
-                    let input_bytes = validate_aes_key(&entered_key.trim());
+                        let key: GenericArray<u8, U32>;
 
-                    // Step 2: Copy the first 32 bytes (or pad with 0s if shorter)
-                    match input_bytes {
-                        Some(valid_key) => {
-                            // Copy the validated key into `byte_array`
-                            byte_array.copy_from_slice(&valid_key);
-                            //println!("AES Key: {:?}", byte_array);
-                        }
-                        None => {
+                        if key_choice.trim().eq_ignore_ascii_case("y") {
+                            key = generate_random_aes_key();
+                            println!("AES Key: {:?}", hex::encode(&key).trim());
+                        } else {
+                            let mut byte_array = [0u8; 32];
+                            println!("Enter the key for the file you want to encrypt:");
+                            let mut entered_key = String::new();
+                            io::stdin()
+                            .read_line(&mut entered_key)
+                            .expect("Failed to read input");
+                            let input_bytes = validate_aes_key(&entered_key.trim());
+                            // Step 2: Copy the first 32 bytes (or pad with 0s if shorter)
+                            match input_bytes {
+                                Some(valid_key) => {
+                                // Copy the validated key into `byte_array`
+                                byte_array.copy_from_slice(&valid_key);
+                                }
+                            None => {
                             // if invalid input, promt again.
+                                }
+                            }
+                        key = GenericArray::from(byte_array);
                         }
-                    }
-
-                    let key: GenericArray<u8, U32> = GenericArray::from(byte_array);
-                    //println!("{:?}", hex::encode(&key));
-
-                    println!("{}",encryption::text_encryption(plaintext, key));
+                    println!("Ciphertext: {}",encryption::text_encryption(plaintext, key));
                     }
         "Decrypt Text" => {
                         println!("Enter ciphertext you want to decrypt:");
@@ -435,7 +438,6 @@ let commands = vec![
                         Some(valid_key) => {
                             // Copy the validated key into `byte_array`
                             byte_array.copy_from_slice(&valid_key);
-                            //println!("AES Key: {:?}", byte_array);
                         }
                         None => {
                             // if invalid input, promt again.
@@ -443,9 +445,8 @@ let commands = vec![
                     }
 
                     let key: GenericArray<u8, U32> = GenericArray::from(byte_array);
-                    //println!("{:?}", hex::encode(&key));
 
-                    println!("{}",encryption::text_decryption(ciphertext, key));
+                    println!("Plaintext: {}",encryption::text_decryption(ciphertext, key));
                     }
         "Quit" => {
             println!("Exiting program...");
@@ -498,9 +499,6 @@ fn register(username: &str, password: SecretBox<String>, password_again: SecretB
 
             let qr_code = auth.qr_code(base32_secret.expose_secret(), "Secure_Programming", &username, 200, 200, ErrorCorrectionLevel::High).unwrap();
 
-
-            // Print out the secret to verify it's correct
-            // println!("Secret: {}", base32_secret.expose_secret());
             println!("Generating QR code for MFA, please do not close it without scanning it without authenticator! there is no way to get it again.");
 
             let qr_svg = qr_code.as_bytes(); // The SVG data from `auth.qr_code`
@@ -546,7 +544,6 @@ fn login(username: &str, password: SecretBox<String>, credential: Credential) {
             // get the salt
             match read_credential(SALT_DB) {
                 Ok(credential) => { //credentials exist
-                    //print!("{}", credential.secret);
                     let decoded_secret = match hex::decode(credential.secret) {
                         Ok(decoded) => Some(decoded), // Pass Vec<u8> directly
                         Err(_) => None, // Return None if decoding fails
@@ -567,7 +564,7 @@ fn login(username: &str, password: SecretBox<String>, credential: Credential) {
                         let log_message = format!("{username} Authenticated successfully.");
                         log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
                     } else {
-                        println!("Authentication failed.");
+                        println!("Authentication failed. Wrong MFA");
                         let log_message = format!("{username} Failed to authenticate - incorrect MFA.");
                         log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
                         quit();
@@ -588,14 +585,14 @@ fn login(username: &str, password: SecretBox<String>, credential: Credential) {
         // Successful authentication
     } else {
         std::thread::sleep(std::time::Duration::from_millis(200));
-        println!("Authentication failed.");
+        println!("Authentication failed. Wrong Credentials.");
         let log_message = format!("{username} Failed to authenticate - Wrong credentials.");
         log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
         quit();
     }
     } else {
     std::thread::sleep(std::time::Duration::from_millis(200));
-    println!("Authentication failed.");
+    println!("Authentication failed. Wrong credentials");
     let log_message = format!("{username} Failed to authenticate - Wrong credentials.");
     log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
     quit();
@@ -663,7 +660,7 @@ fn file_deletion(file_path: PathBuf) -> io::Result<()> {
 
     // Step 3: Overwrite file multiple times with random data
     let mut rng = rand::thread_rng();
-    for _ in 0..10 {
+    for _ in 0..100 {
         file.seek(SeekFrom::Start(0))?;
         let random_data: Vec<u8> = (0..file_size).map(|_| rng.gen::<u8>()).collect();
         file.write_all(&random_data)?;
@@ -972,8 +969,6 @@ mod tests {
 
             let qr_code = auth.qr_code(base32_secret.expose_secret(), "Secure_Programming", &username, 200, 200, ErrorCorrectionLevel::High)
                 .unwrap();
-                // Print out the secret to verify it's correct
-                // println!("Secret: {}", base32_secret.expose_secret());
                 println!("Generating QR code, please do not close it without scanning, there is no way to get it again.");
 
                 let random_filename: String = rand::thread_rng()
@@ -1013,7 +1008,7 @@ mod tests {
                 let log_message = format!("{username} Authenticated successfully.");
                 log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
             } else {
-                println!("Authentication failed.");
+                println!("Authentication failed. Wrong MFA");
                 let log_message = format!("{username} Failed to authenticate - incorrect MFA.");
                 log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
                 //quit();
@@ -1021,14 +1016,14 @@ mod tests {
             // Successful authentication
         } else {
             std::thread::sleep(std::time::Duration::from_millis(200));
-            println!("Authentication failed.");
+            println!("Authentication failed. Wrong Credentials.");
             let log_message = format!("{username} Failed to authenticate - Wrong credentials.");
             log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
             //quit();
         }
         } else {
         std::thread::sleep(std::time::Duration::from_millis(200));
-        println!("Authentication failed.");
+        println!("Authentication failed. Wrong Credentials");
         let log_message = format!("{username} Failed to authenticate - Wrong credentials.");
         log_to_event_viewer(&log_message, EVENTLOG_INFORMATION_TYPE);
         //quit();

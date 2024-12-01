@@ -28,7 +28,6 @@ pub fn file_encryption(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Re
     let new_file_name = format!("{}{}", file_name.to_string_lossy(), ".encrypted.rt");
 
     let contents = fs::read(file_path.clone()).expect("Should have been able to read the file");
-    //println!("{:?}",&contents);
     let mut plaintext = contents.clone();
 
     // Padding
@@ -70,8 +69,6 @@ pub fn file_encryption(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Re
     drop(file_path);
     drop(file);
 
-    println!("AES Key: {:?}", hex::encode(&key).trim());
-    println!("HMAC: {:?}", hex::encode(hmac_result).trim());
     println!("Stored File name: {}", &new_file_name);
     Ok(())
 }
@@ -240,7 +237,6 @@ pub fn file_store(file_path: PathBuf, key: GenericArray<u8, U32>, destination: &
     // Combine destination and file name
     let new_file_name = format!("{}\\{}", destination.trim_end_matches('\\'), file_name.to_string_lossy());
     println!("Encrypting file: {:?}", file_path);
-    // println!("Destination file: {}", new_file_name);
 
     // Read the file contents
     let mut plaintext = fs::read(&file_path)?;
@@ -261,18 +257,30 @@ pub fn file_store(file_path: PathBuf, key: GenericArray<u8, U32>, destination: &
         cipher.encrypt_block(block);
     }
 
+
     // Convert encrypted blocks to byte array
     let ciphertext: Vec<u8> = blocks.iter()
         .flat_map(|block| block.as_slice())
         .cloned()
         .collect();
 
-    // Write encrypted contents to the new file
-    let mut file = File::create(&new_file_name)?;
-    file.write_all(&ciphertext)?;
+    // Generate HMAC
+    let mut hmac = <HmacSha256 as Mac>::new_from_slice(&key)
+        .expect("HMAC can take key of any size");
+    hmac.update(&ciphertext); // Add ciphertext to HMAC computation
+    let hmac_result = hmac.finalize().into_bytes(); // Get HMAC as bytes
 
-    println!("AES Key: {:?}", hex::encode(&key).trim());
-    // println!("Encrypted File name: {}", new_file_name);
+    // Combine ciphertext and HMAC
+    let mut output_data = ciphertext;
+    output_data.extend(hmac_result);
+
+    // create output file
+    let mut file = File::create(&new_file_name)?;
+    file.write_all(&output_data)?;
+    drop(file_path);
+    drop(file);
+
+    println!("Stored File name: {}", &new_file_name);
     Ok(())
 }
 
@@ -282,23 +290,33 @@ pub fn file_retrieve(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Resu
         println!("Error: File does not exist. Returning to the menu...");
         return Ok(()); // Exit gracefully
     }
-
-    // File name for decrypted output
-    let file_stem = file_path.file_stem().unwrap();
-    let file_stem_str = file_stem.to_str().unwrap();
-    println!("file_stem_str: {}",file_stem_str);
-
     // Remove the ".encrypted.rt" from the stem if it exists
-    let new_file_name = file_stem_str.trim_end_matches(".encrypted.rt");
+    let new_file_name = file_path.file_name()
+    .expect("Failed to get file name")
+    .to_str()
+    .expect("Failed to convert file name to string");
 
     // Read the encrypted file
     let encrypted_data = fs::read(&file_path)?;
+
+    if encrypted_data.len() < 32 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "File too small to contain valid HMAC"));
+    }
+    let (ciphertext, received_hmac) = encrypted_data.split_at(encrypted_data.len() - 32);
+
+    let mut hmac = <HmacSha256 as Mac>::new_from_slice(&key)
+        .expect("HMAC can take key of any size");
+    hmac.update(ciphertext);
+
+    hmac.verify_slice(received_hmac)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "HMAC verification failed"))?;
+
 
     // Cipher initialization
     let cipher = Aes256::new(&key);
 
     // Decrypting
-    let mut blocks: Vec<GenericArray<u8, aes::cipher::consts::U16>> = encrypted_data
+    let mut blocks: Vec<GenericArray<u8, aes::cipher::consts::U16>> = ciphertext
         .chunks_exact(16)
         .map(GenericArray::clone_from_slice)
         .collect();
@@ -323,7 +341,6 @@ pub fn file_retrieve(file_path: PathBuf, key: GenericArray<u8, U32>) -> io::Resu
     file.write_all(&decrypted_data)?;
     drop(file_path);
     drop(file);
-
     Ok(())
 }
 
