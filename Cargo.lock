@@ -2067,6 +2067,7 @@ version = "0.1.0"
 dependencies = [
  "aes",
  "base32 0.5.1",
+ "base64 0.22.1",
  "block-padding",
  "cargo-credential-wincred",
  "chrono",

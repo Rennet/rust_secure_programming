@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 aes = "0.8.4"
 base32 = "0.5.1"
+base64 = "0.22.1"
 block-padding = "0.3.3"
 cargo-credential-wincred = "0.4.8"
 chrono = "0.4.38"
